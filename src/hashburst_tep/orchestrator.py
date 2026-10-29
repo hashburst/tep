@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from .ledger import next_count,poh_input
 from .poh import EvaluationWindow
 from .block import assemble_verified_block
-from .federation import QuorumCertificate,FinalityVote
+from .federation import QuorumCertificate
 from .finalizer import finalize_verified_block
 
 @dataclass(frozen=True)
@@ -34,9 +34,10 @@ class LedgerOrchestrator:
             core=record[0];certified_time=core[6] if isinstance(core,(list,tuple)) and len(core)==8 and core[0]==2 else None
             w.register(rid,certified_time);by_id[rid]=record
         candidate=w.evaluate_and_close()
-        if not w.verify(candidate):raise ValueError("VDF verification failed")
-        ordered=tuple(by_id[r.record_id] for r in candidate.records)
-        block=assemble_verified_block(count=count,previous_h=previous.h,previous_block_id=previous.block_id,challenge=challenge,result=candidate.result,vdf_suite=self.vdf_suite,vdf_params_hash=self.vdf_params_hash,records=ordered)
+        verified=w.verify(candidate)
+        if verified is None:raise ValueError("VDF verification failed")
+        ordered=tuple(by_id[r.record_id] for r in verified.records)
+        block=assemble_verified_block(verified=verified,count=count,previous_h=previous.h,previous_block_id=previous.block_id,vdf_suite=self.vdf_suite,vdf_params_hash=self.vdf_params_hash,records=ordered)
         shell=QuorumCertificate(self.validator_set.version,self.validator_set.digest(),self.network_id,count,block.block_id,())
         return PreparedBlock(block,shell.message(),self.validator_set.digest())
     def make_qc(self,prepared,votes):
