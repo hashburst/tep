@@ -43,3 +43,15 @@ These standards support project implementation choices. They do not change the s
 ## Freeze conditions
 
 PDR-008, PDR-009, PDR-018 and PDR-019 are resolved for RC1 experimentation, not for mainnet. Mainnet freeze requires independent cryptographic review, performance benchmarks, adversarial interoperability tests and a separate mainnet decision record.
+
+## PDR-025: VDF progress observation
+
+Subject: binding a registration to an observable completed VDF iteration.
+
+Evidence class: PROJECT-DESIGN constrained by the patent recording-window and same-block ordering profiles.
+
+Finding: the deterministic test adapter exposes synthetic per-iteration states, but the selected chiavdf Python interface exposes complete evaluation and verification rather than an iterator of main-loop intermediate forms. The mock behavior MUST NOT be assumed to exist in CG-WESO-v1.
+
+RC1 decision: DEFERRED. CG-WESO-v1 is integrated only for complete evaluate/verify conformance. Record binding remains on the deterministic adapter until a native progress mechanism or a different patent-permitted same-block ordering profile is selected.
+
+Freeze requirements: implementation evidence, deterministic progress semantics, crash/restart semantics, performance impact, test vectors and proof that progress observations refer to the same evaluation instance that produces the final VDF output.
