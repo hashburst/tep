@@ -3,6 +3,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/"src"))
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
+from hashburst_tep.cose_sign1 import sign1_ed25519
 from hashburst_tep.genesis import Genesis
 from hashburst_tep.records_v2 import WindowRecordCore,ledger_record
 from hashburst_tep.federation import Validator,ValidatorSet,FinalityVote
@@ -16,12 +17,13 @@ class OrchestratorTests(unittest.TestCase):
  def setUp(self):
   self.net=bytes.fromhex("10"*32);self.vp=bytes.fromhex("11"*32);self.gen=Genesis(self.net,1,1,self.vp)
   self.keys=[Ed25519PrivateKey.generate() for _ in range(4)]
+  self.record_key=Ed25519PrivateKey.generate()
   self.vals=tuple(Validator(bytes([i+1])*32,pub(k)) for i,k in enumerate(self.keys));self.vs=ValidatorSet(1,self.vals)
   self.o=LedgerOrchestrator(network_id=self.net,vdf_params_hash=self.vp,vdf_suite=1,iterations=8,adapter=DeterministicTestVDF(),validator_set=self.vs)
   self.prev=PreviousLedgerState(0,self.gen.h0(),bytes.fromhex("22"*32))
  def rec(self,n,time=None):
   c=WindowRecordCore(bytes.fromhex("31"*32),bytes.fromhex("32"*32),bytes([n])*32,n,self.prev.block_id,time,bytes([n+10])*32)
-  return ledger_record(c,b"synthetic-protection")
+  return ledger_record(c,sign1_ed25519(c.encode(),self.record_key))
  def votes(self,p,indexes=(0,1,2)):
   return tuple(FinalityVote(self.vals[i].validator_id,self.keys[i].sign(p.vote_message)) for i in indexes)
  def test_end_to_end_prepare_vote_finalize_recover(self):
