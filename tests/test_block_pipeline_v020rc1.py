@@ -20,9 +20,9 @@ class PipelineTests(unittest.TestCase):
  def test_b0_to_b1_candidate_and_checkpoint(self):
   w=EvaluationWindow(DeterministicTestVDF());w.start(self.challenge,1,8)
   r1=self._record("55",1,200);r2=self._record("66",2,100);w.register(r1[1],200);w.register(r2[1],100)
-  cand=w.evaluate_and_close();self.assertTrue(w.verify(cand))
-  by_id={r[1]:r for r in (r1,r2)};ordered=[by_id[x.record_id] for x in cand.records]
-  b=assemble_verified_block(count=1,previous_h=self.g.h0(),previous_block_id=self.prev,challenge=self.challenge,result=cand.result,vdf_suite=1,vdf_params_hash=self.vp,records=ordered)
+  cand=w.evaluate_and_close();verified=w.verify(cand);self.assertIsNotNone(verified)
+  by_id={r[1]:r for r in (r1,r2)};ordered=[by_id[x.record_id] for x in verified.records]
+  b=assemble_verified_block(verified=verified,count=1,previous_h=self.g.h0(),previous_block_id=self.prev,vdf_suite=1,vdf_params_hash=self.vp,records=ordered)
   self.assertEqual(b.header[1],1);self.assertEqual(len(b.block_id),32);self.assertEqual(len(b.h),32)
   cp=Checkpoint(self.net,1,b.h,b.block_id,self.vp,1,bytes.fromhex("88"*32))
   with tempfile.TemporaryDirectory() as d:
