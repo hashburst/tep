@@ -15,8 +15,8 @@ class RecoveryTests(unittest.TestCase):
  def setUp(self):
   self.net=bytes(32);self.vp=bytes.fromhex("11"*32);self.g=Genesis(self.net,1,1,self.vp);self.genesis_id=bytes.fromhex("22"*32)
  def _block(self,count,previous_h,previous_id):
-  a=poh_input(self.net,count,previous_h,previous_id,self.vp);w=EvaluationWindow(DeterministicTestVDF());w.start(a,count,8);c=w.evaluate_and_close();self.assertTrue(w.verify(c))
-  return assemble_verified_block(count=count,previous_h=previous_h,previous_block_id=previous_id,challenge=a,result=c.result,vdf_suite=1,vdf_params_hash=self.vp,records=[])
+  a=poh_input(self.net,count,previous_h,previous_id,self.vp);w=EvaluationWindow(DeterministicTestVDF());w.start(a,count,8);c=w.evaluate_and_close();verified=w.verify(c);self.assertIsNotNone(verified)
+  return assemble_verified_block(verified=verified,count=count,previous_h=previous_h,previous_block_id=previous_id,vdf_suite=1,vdf_params_hash=self.vp,records=[])
  def test_checkpoint_roundtrip_and_integrity(self):
   b=self._block(1,self.g.h0(),self.genesis_id);cp=Checkpoint(self.net,1,b.h,b.block_id,self.vp,1,bytes.fromhex("88"*32))
   self.assertEqual(decode_checkpoint(cp.encode()),cp)
