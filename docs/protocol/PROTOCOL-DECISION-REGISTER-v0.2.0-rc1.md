@@ -16,10 +16,10 @@ The evidence class states where a requirement comes from. The selected design st
 | PDR-008 | Concrete VDF | PROJECT-DESIGN constrained by claim 6 | CG-WESO-v1: repeated squaring in an imaginary-quadratic class group with Wesolowski proof. Independent cryptographic review required before mainnet. | RESOLVED FOR RC1 |
 | PDR-009 | Evaluation parameter N | PROJECT-DESIGN constrained by claim 5 | TEST 64; CONFORMANCE 4096; PILOT 1,000,000. Parameter is committed by vdf_params_hash. | RESOLVED FOR RC1 |
 | PDR-010 | Verification relation | PATENT-MANDATED for claim-6 profile | Verification must succeed and measured tv must be lower than tH for the selected conformance profile. | RESOLVED |
-| PDR-011 | Registration window | PATENT-MANDATED | Record binds to the active block and latest completed VDF iteration. | RESOLVED |
+| PDR-011 | Registration window | PATENT-MANDATED | Normative CG-WESO records bind to the active block evaluation window. Per-iteration binding is limited to the experimental deterministic-test profile. | RESOLVED |
 | PDR-012 | Canonical rdp | PATENT-PERMITTED plus PROJECT-DESIGN | Fixed deterministic record core, SHA3-256 record_id and protection field. | RESOLVED |
 | PDR-013 | Certified TSA time | PATENT-PERMITTED | Nullable certified-time field; optional profile. | RESOLVED |
-| PDR-014 | Same-block ordering | PATENT-PERMITTED plus PROJECT-DESIGN | iteration_index, then certified_time when present, then record_id as deterministic tie-breaker. | RESOLVED |
+| PDR-014 | Same-block ordering | PATENT-PERMITTED plus PROJECT-DESIGN | Normative CG-WESO profile: certified_time when present, then record_id deterministic tie-breaker; without certified_time, record_id is canonicalization only. Experimental deterministic-test profile may additionally use iteration_index. | RESOLVED |
 | PDR-015 | Record protection | PATENT-PERMITTED plus security design | Ed25519 COSE_Sign1 required for normative RC1 records; null only for declared legacy/import profile. | RESOLVED |
 | PDR-016 | Prior-ledger hash/reference | PATENT-PERMITTED | prior_block_id is mandatory in normative RC1 record core and request context. | RESOLVED |
 | PDR-017 | Privacy pruning | PATENT-PERMITTED plus PROJECT-DESIGN | Prune non-local record metadata only after finality while retaining commitments and ordering evidence. | RESOLVED |
