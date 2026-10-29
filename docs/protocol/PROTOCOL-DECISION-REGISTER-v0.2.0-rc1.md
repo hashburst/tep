@@ -1,48 +1,45 @@
 # TEP v0.2.0-rc1 Protocol Decision Register
 
-Status: PRE-NORMATIVE
+Status: RC1 DESIGN FREEZE CANDIDATE
 
-This register separates patent requirements from implementation choices. A decision marked OPEN is not part of the protocol.
+The evidence class states where a requirement comes from. The selected design states what this project chooses. A project choice is never described as a patent requirement.
 
-## Classification
+| ID | Subject | Evidence class | Selected RC1 design | State |
+|---|---|---|---|---|
+| PDR-001 | Genesis B0 | PROJECT-DESIGN | Versioned deterministic genesis descriptor; C0=0; H0=SHA3-256 over domain-separated deterministic CBOR genesis. | RESOLVED |
+| PDR-002 | Canonical encoding | PROJECT-DESIGN | RFC 8949 core deterministic CBOR; fixed arrays; definite lengths; no floats. | RESOLVED |
+| PDR-003 | Progressive Cn | PATENT-MANDATED | Unsigned 64-bit strictly increasing count. | RESOLVED |
+| PDR-004 | Exact increment | PROJECT-DESIGN | Cn=C(n-1)+1; halt before uint64 exhaustion. | RESOLVED |
+| PDR-005 | Recursive prior state | DESCRIPTION-DERIVED | An contains H(n-1) and block_id(n-1). | RESOLVED |
+| PDR-006 | Additional input An | PROJECT-DESIGN constrained by patent model | Domain-separated digest of network_id, Cn, H(n-1), prior block_id and VDF parameter hash. Current BDn is excluded because it is collected during evaluation. | RESOLVED |
+| PDR-007 | Sequential evaluation | PATENT-MANDATED for claim-5 profile | Predetermined sequential repeated-squaring evaluation. | RESOLVED |
+| PDR-008 | Concrete VDF | PROJECT-DESIGN constrained by claim 6 | CG-WESO-v1: repeated squaring in an imaginary-quadratic class group with Wesolowski proof. Independent cryptographic review required before mainnet. | RESOLVED FOR RC1 |
+| PDR-009 | Evaluation parameter N | PROJECT-DESIGN constrained by claim 5 | TEST 64; CONFORMANCE 4096; PILOT 1,000,000. Parameter is committed by vdf_params_hash. | RESOLVED FOR RC1 |
+| PDR-010 | Verification relation | PATENT-MANDATED for claim-6 profile | Verification must succeed and measured tv must be lower than tH for the selected conformance profile. | RESOLVED |
+| PDR-011 | Registration window | PATENT-MANDATED | Record binds to the active block and latest completed VDF iteration. | RESOLVED |
+| PDR-012 | Canonical rdp | PATENT-PERMITTED plus PROJECT-DESIGN | Fixed deterministic record core, SHA3-256 record_id and protection field. | RESOLVED |
+| PDR-013 | Certified TSA time | PATENT-PERMITTED | Nullable certified-time field; optional profile. | RESOLVED |
+| PDR-014 | Same-block ordering | PATENT-PERMITTED plus PROJECT-DESIGN | iteration_index, then certified_time when present, then record_id as deterministic tie-breaker. | RESOLVED |
+| PDR-015 | Record protection | PATENT-PERMITTED plus security design | Ed25519 COSE_Sign1 required for normative RC1 records; null only for declared legacy/import profile. | RESOLVED |
+| PDR-016 | Prior-ledger hash/reference | PATENT-PERMITTED | prior_block_id is mandatory in normative RC1 record core and request context. | RESOLVED |
+| PDR-017 | Privacy pruning | PATENT-PERMITTED plus PROJECT-DESIGN | Prune non-local record metadata only after finality while retaining commitments and ordering evidence. | RESOLVED |
+| PDR-018 | Competing blocks | PROJECT-DESIGN | Eligible candidates share predecessor/count/parameters; smallest block_id is deterministic RC1 tie-breaker. Not a Byzantine-consensus claim. | RESOLVED FOR RC1 |
+| PDR-019 | Quorum/dissemination | PROJECT-DESIGN | Versioned federation validator set; finality certificate threshold floor(2m/3)+1. | RESOLVED FOR RC1 |
+| PDR-020 | Crash recovery | PROJECT-DESIGN | Atomic finalized checkpoints; verify-forward recovery; incomplete VDF state is never accepted ledger state. | RESOLVED |
+| PDR-021 | v2.2 carrier | PRODUCTION-DERIVED | Frozen TEP-v2.2-COMPAT carrier remains available. | FROZEN |
+| PDR-022 | Identity migration | PRODUCTION-DERIVED | Preserve existing identity and peer state; ledger state stored separately. | FROZEN |
+| PDR-023 | Transport counters vs PoH | PATENT/PRODUCTION BOUNDARY | Transport state is never imported as ledger PoH state. | FROZEN |
+| PDR-024 | Solana semantics | PROJECT GUARDRAIL | No Solana-specific semantics are imported by analogy. | FROZEN |
 
-PATENT-MANDATED means required by the traced granted claims for the stated profile.
+## External standards used by project design
 
-PATENT-PERMITTED means described or allowed by the patent material but not mandatory in every claim profile.
+- FIPS 202 for SHA3-256.
+- RFC 8949 section 4.2.1 for deterministic CBOR requirements.
+- RFC 9052 for COSE_Sign1 structure.
+- Wesolowski VDF literature for the selected RC1 proof construction.
 
-PRODUCTION-DERIVED means required only for compatibility with the observed TEP v2.2 runtime.
+These standards support project implementation choices. They do not change the scope of the cited TEP patents.
 
-PROJECT-DESIGN means a new engineering choice that must be justified, tested and approved before specification freeze.
+## Freeze conditions
 
-## Decisions
-
-| ID | Subject | Evidence | Classification | Current decision |
-| --- | --- | --- | --- | --- |
-| PDR-001 | Genesis block B0 | The description starts the recursive sequence from a source block but does not freeze a binary genesis construction. | PROJECT-DESIGN | OPEN |
-| PDR-002 | Canonical block encoding | Claims define semantic fields and relationships, not a final byte encoding. | PROJECT-DESIGN | OPEN |
-| PDR-003 | Progressive count Cn | Claim 1 requires a progressive count; claim 2 uses its increasing value for ordering. | PATENT-MANDATED | C(n+1) > Cn. Exact step remains OPEN. |
-| PDR-004 | Exact count increment | No traced claim requires increment by exactly one. | PROJECT-DESIGN | OPEN |
-| PDR-005 | Recursive prior state | Description models Hn from H(n-1) and optional additional values. | PATENT-PERMITTED / DESCRIPTION-DERIVED | Preserve recursive prior-state dependency. Exact encoding OPEN. |
-| PDR-006 | Additional input An | Description permits additional values but does not freeze their set. | PROJECT-DESIGN constrained by patent model | OPEN |
-| PDR-007 | Sequential evaluation | Claims 1 and 5 require predetermined sequential work; claim 5 requires iterative dependency on the previous result. | PATENT-MANDATED for claim-5 profile | REQUIRED |
-| PDR-008 | Concrete VDF | Claim 6 requires evaluation/verification algorithms of a VDF in its dependent profile but does not freeze a concrete construction. | PROJECT-DESIGN constrained by claim 6 | OPEN |
-| PDR-009 | Evaluation parameter N | Claim 5 requires a predetermined iteration count in its profile but not a universal numeric value. | PROJECT-DESIGN constrained by claim 5 | OPEN |
-| PDR-010 | Verification relation | Claim 6 requires verification faster than evaluation. | PATENT-MANDATED for claim-6 profile | Require tv < tH. Measurement profile OPEN. |
-| PDR-011 | Registration window | Claim 1 binds a transmission to the block whose hash is being calculated when registration is requested. | PATENT-MANDATED | REQUIRED |
-| PDR-012 | Transmission record rdp | Claims 9-11 define dependent record-information profiles. | PATENT-PERMITTED / profile-dependent | Base canonical fields OPEN. |
-| PDR-013 | Certified TSA time | Claim 8 adds certified time as a dependent profile. | PATENT-PERMITTED / profile-dependent | OPTIONAL PROFILE |
-| PDR-014 | Same-block ordering | Claims 3 and 4 provide timestamp-based and associated-hash ordering profiles. | PATENT-PERMITTED / profile-dependent | OPEN profile selection |
-| PDR-015 | Record protection | Claim 10 provides recipient protection and/or sender authentication. | PATENT-PERMITTED; security design also required | OPEN exact representation |
-| PDR-016 | Prior-ledger hash in request | Claim 11 adds the last-ledger-block hash at transmission time. | PATENT-PERMITTED / profile-dependent | OPEN |
-| PDR-017 | Privacy pruning | Claim 12 removes information unrelated to the local sender/recipient role. | PATENT-PERMITTED / profile-dependent | OPEN commitment and pruning representation |
-| PDR-018 | Competing blocks | No traced claim freezes a distributed fork-choice rule. | PROJECT-DESIGN | OPEN |
-| PDR-019 | Quorum and dissemination | No traced claim freezes quorum or broadcast mechanics. | PROJECT-DESIGN | OPEN |
-| PDR-020 | Crash recovery | Patent semantics require continuity but do not freeze software checkpoint format. | PROJECT-DESIGN | OPEN |
-| PDR-021 | v2.2 transport carrier | Observed production runtime defines the compatibility wire profile. | PRODUCTION-DERIVED | FROZEN in TEP-TRANSPORT-v2.2-COMPAT |
-| PDR-022 | Identity migration | Production identities persist outside the repository. | PRODUCTION-DERIVED | MUST preserve existing identity and state |
-| PDR-023 | Transport counters versus PoH | Patent PoH is ledger evaluation/order; v2.2 transport counters are carrier state. | PATENT / PRODUCTION boundary | MUST remain separate |
-| PDR-024 | Solana semantics | No traced TEP patent requirement establishes Solana-specific protocol semantics. | PROJECT GUARDRAIL | MUST NOT import by analogy |
-
-## Freeze rule
-
-An OPEN item may become normative only after its evidence class, selected construction, deterministic test vectors, failure behavior and migration impact are recorded. A project design must never be described as a patent requirement.
+PDR-008, PDR-009, PDR-018 and PDR-019 are resolved for RC1 experimentation, not for mainnet. Mainnet freeze requires independent cryptographic review, performance benchmarks, adversarial interoperability tests and a separate mainnet decision record.
