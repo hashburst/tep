@@ -14,7 +14,8 @@ class IdentityTests(unittest.TestCase):
   self.assertNotEqual(self.i.identity_id(),PeerIdentity(bytes.fromhex("11"*32),bytes.fromhex("66"*32)).identity_id())
  def test_legacy_binding_preserves_v22_identifiers_without_equating_them(self):
   b=LegacyBinding(self.i.identity_id(),"hashburst-node-long-name","12D3KooW-example",self.i.transport_public_key)
-  self.assertTrue(b.validate_for(self.i));self.assertEqual(b.wire_node_field(),b"hashburst-node-lo")
+  self.assertTrue(b.validate_for(self.i));self.assertEqual(b.wire_node_field(),b"hashburst-node-l")
+  self.assertEqual(len(b.wire_node_field()),16)
   self.assertNotEqual(self.i.identity_id(),b.wire_node_field().ljust(32,b"\x00"))
  def test_legacy_binding_rejects_wrong_transport_key(self):
   b=LegacyBinding(self.i.identity_id(),"node-a","peer-a",bytes.fromhex("77"*32));self.assertFalse(b.validate_for(self.i))
