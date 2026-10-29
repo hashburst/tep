@@ -1,10 +1,10 @@
-"""Finalized checkpoint construction and atomic persistence."""
+"""Finalized checkpoint construction, canonical decoding and atomic persistence."""
 import os,tempfile
 from dataclasses import dataclass
 from hashlib import sha3_256
 from pathlib import Path
 from .domains import CHECKPOINT_DOMAIN
-from .encoding import dumps
+from .encoding import dumps,loads
 
 def _b32(name,value):
     if not isinstance(value,bytes) or len(value)!=32: raise ValueError(f"{name} must be 32 bytes")
@@ -22,6 +22,14 @@ class Checkpoint:
         return [1,self.network_id,self.count,self.h,self.block_id,self.vdf_params_hash,self.validator_set_version,self.quorum_certificate_digest]
     def encode(self): return dumps(self.values())
     def checkpoint_id(self): return sha3_256(CHECKPOINT_DOMAIN+self.encode()).digest()
+
+def decode_checkpoint(data):
+    v=loads(data)
+    if not isinstance(v,list) or len(v)!=8 or v[0]!=1:raise ValueError("unsupported checkpoint schema")
+    cp=Checkpoint(v[1],v[2],v[3],v[4],v[5],v[6],v[7])
+    cp.values()
+    if cp.encode()!=data:raise ValueError("non-canonical checkpoint")
+    return cp
 
 def atomic_write(path,data):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)

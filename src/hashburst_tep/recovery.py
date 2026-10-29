@@ -1,7 +1,7 @@
 """Finalized-ledger checkpoint persistence and recovery helpers."""
 from dataclasses import dataclass
 from pathlib import Path
-from .checkpoint import Checkpoint,atomic_write
+from .checkpoint import Checkpoint,atomic_write,decode_checkpoint
 
 @dataclass(frozen=True)
 class FinalizedState:
@@ -13,10 +13,10 @@ def persist_finalized(path,checkpoint):
     atomic_write(path,payload)
     return FinalizedState(checkpoint,checkpoint.checkpoint_id())
 
-def load_finalized(path,decode_checkpoint):
+def load_finalized(path,decoder=decode_checkpoint):
     data=Path(path).read_bytes()
     if len(data)<33:raise ValueError("checkpoint file truncated")
     expected,payload=data[:32],data[32:]
-    cp=decode_checkpoint(payload)
+    cp=decoder(payload)
     if cp.checkpoint_id()!=expected:raise ValueError("checkpoint integrity failure")
     return FinalizedState(cp,expected)
