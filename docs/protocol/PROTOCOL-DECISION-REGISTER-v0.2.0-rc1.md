@@ -46,12 +46,18 @@ PDR-008, PDR-009, PDR-018 and PDR-019 are resolved for RC1 experimentation, not 
 
 ## PDR-025: VDF progress observation
 
-Subject: binding a registration to an observable completed VDF iteration.
+Subject: binding a registration to the active VDF evaluation without inventing unavailable intermediate states.
 
-Evidence class: PROJECT-DESIGN constrained by the patent recording-window and same-block ordering profiles.
+Evidence class: PROJECT-DESIGN constrained by claim 1 registration-window semantics and the patent-permitted same-block ordering profiles.
 
-Finding: the deterministic test adapter exposes synthetic per-iteration states, but the selected chiavdf Python interface exposes complete evaluation and verification rather than an iterator of main-loop intermediate forms. The mock behavior MUST NOT be assumed to exist in CG-WESO-v1.
+Finding: claim 1 requires a registration received during the evaluation interval to be associated with the block whose hash is being evaluated. The traced claim does not require a per-request VDF iteration index. Claims 3 and 4 separately provide same-block ordering profiles. The selected chiavdf Python interface exposes complete evaluation and verification but not the main-loop intermediate forms as an iterator.
 
-RC1 decision: DEFERRED. CG-WESO-v1 is integrated only for complete evaluate/verify conformance. Record binding remains on the deterministic adapter until a native progress mechanism or a different patent-permitted same-block ordering profile is selected.
+RC1 decision: RESOLVED.
 
-Freeze requirements: implementation evidence, deterministic progress semantics, crash/restart semantics, performance impact, test vectors and proof that progress observations refer to the same evaluation instance that produces the final VDF output.
+The normative CG-WESO-v1 profile binds a registration to the active evaluation instance and block count while that evaluation is RUNNING. It MUST NOT synthesize iteration_index or iteration_state_digest. Same-block deterministic ordering for this profile uses certified_time when the certified-time profile is active, followed by record_id as a deterministic tie-breaker. When certified time is absent, record_id provides deterministic canonicalization only and MUST NOT be represented as evidence of physical arrival order.
+
+The existing per-iteration marker remains an EXPERIMENTAL TEST PROFILE for DeterministicTestVDF and is not emitted by CG-WESO-v1.
+
+Crash/restart rule: an evaluation instance that terminates without a valid final VDF result is abandoned. Its registrations are not silently moved into a completed block. Recovery restarts from the last accepted predecessor and opens a new evaluation instance.
+
+Rationale: this satisfies the traced registration-window requirement without modifying the VDF implementation or claiming observations that the concrete evaluator does not expose.
