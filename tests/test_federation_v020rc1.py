@@ -20,23 +20,34 @@ class FederationTests(unittest.TestCase):
   shell=QuorumCertificate(self.vs.version,self.vs.digest(),self.net,count,bid,())
   votes=tuple(FinalityVote(self.vals[i].validator_id,self.keys[i].sign(shell.message())) for i in indexes)
   return QuorumCertificate(self.vs.version,self.vs.digest(),self.net,count,bid,votes)
+ def block(self,bid=None):
+  bid=self.bid if bid is None else bid
+  return AcceptedBlock((1,9,bytes(32),bytes(32),bytes.fromhex("dd"*32),1,bytes.fromhex("11"*32),bytes(32)),(),b"",bid,bytes.fromhex("dd"*32))
  def test_threshold_four_requires_three(self):
   self.assertEqual(self.vs.threshold(),3);self.assertTrue(verify_qc(self.qc(),self.vs));self.assertFalse(verify_qc(self.qc((0,1)),self.vs))
  def test_duplicate_vote_rejected(self):
   q=self.qc((0,1,2));bad=QuorumCertificate(q.validator_set_version,q.validator_set_digest,q.network_id,q.count,q.block_id,(q.votes[0],q.votes[0],q.votes[2]));self.assertFalse(verify_qc(bad,self.vs))
- def test_wrong_block_and_signature_rejected(self):
-  self.assertFalse(verify_qc(self.qc(bid=bytes.fromhex("cc"*32)),self.vs))
-  q=self.qc();v=list(q.votes);v[0]=FinalityVote(v[0].validator_id,bytes(64));bad=QuorumCertificate(q.validator_set_version,q.validator_set_digest,q.network_id,q.count,q.block_id,tuple(v));self.assertFalse(verify_qc(bad,self.vs))
+ def test_tampered_block_and_signature_rejected(self):
+  q=self.qc();tampered=QuorumCertificate(q.validator_set_version,q.validator_set_digest,q.network_id,q.count,bytes.fromhex("cc"*32),q.votes)
+  self.assertFalse(verify_qc(tampered,self.vs))
+  v=list(q.votes);v[0]=FinalityVote(v[0].validator_id,bytes(64));bad=QuorumCertificate(q.validator_set_version,q.validator_set_digest,q.network_id,q.count,q.block_id,tuple(v));self.assertFalse(verify_qc(bad,self.vs))
  def test_duplicate_validator_identity_or_key_rejected(self):
   with self.assertRaises(ValueError):ValidatorSet(1,(self.vals[0],self.vals[0])).digest()
   with self.assertRaises(ValueError):ValidatorSet(1,(self.vals[0],Validator(bytes.fromhex("ff"*32),self.vals[0].public_key))).digest()
  def test_finalizer_requires_valid_qc(self):
-  block=AcceptedBlock((1,9,bytes(32),bytes(32),bytes.fromhex("dd"*32),1,bytes.fromhex("11"*32),bytes(32)),(),b"",self.bid,bytes.fromhex("dd"*32))
+  block=self.block()
   with tempfile.TemporaryDirectory() as d:
    p=Path(d)/"f.chk"
    with self.assertRaises(ValueError):finalize_verified_block(p,network_id=self.net,block=block,vdf_params_hash=bytes.fromhex("11"*32),validator_set=self.vs,qc=self.qc((0,1)))
    self.assertFalse(p.exists())
    state=finalize_verified_block(p,network_id=self.net,block=block,vdf_params_hash=bytes.fromhex("11"*32),validator_set=self.vs,qc=self.qc())
    self.assertEqual(load_finalized(p).checkpoint,state.checkpoint);self.assertEqual(state.checkpoint.validator_set_version,7)
+ def test_valid_qc_for_other_block_cannot_finalize_local_block(self):
+  other=bytes.fromhex("cc"*32);q=self.qc(bid=other)
+  self.assertTrue(verify_qc(q,self.vs))
+  with tempfile.TemporaryDirectory() as d:
+   p=Path(d)/"f.chk"
+   with self.assertRaises(ValueError):finalize_verified_block(p,network_id=self.net,block=self.block(),vdf_params_hash=bytes.fromhex("11"*32),validator_set=self.vs,qc=q)
+   self.assertFalse(p.exists())
 
 if __name__=="__main__":unittest.main(verbosity=2)
