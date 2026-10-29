@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from hashlib import sha3_256
 from .domains import RECORD_DOMAIN
 from .encoding import dumps
+from .cose_sign1 import parse_sign1
 
 def _b32(name,value):
     if not isinstance(value,bytes) or len(value)!=32:raise ValueError(f"{name} must be 32 bytes")
@@ -20,7 +21,13 @@ class WindowRecordCore:
     def encode(self):return dumps(self.values())
     def record_id(self):return sha3_256(RECORD_DOMAIN+self.encode()).digest()
 
-def ledger_record(core,protection):
+def ledger_record(core,protection,legacy_import=False):
     rid=core.record_id()
-    if protection is not None and not isinstance(protection,bytes):raise ValueError("protection must be encoded bytes or null")
+    if legacy_import:
+        if protection is not None:raise ValueError("legacy/import protection must be null")
+        return [core.values(),rid,None]
+    if not isinstance(protection,bytes):raise ValueError("normative RC1 record requires encoded COSE_Sign1")
+    try:_,payload,_=parse_sign1(protection)
+    except Exception as exc:raise ValueError("invalid normative COSE_Sign1 protection") from exc
+    if payload!=core.encode():raise ValueError("COSE_Sign1 payload must equal canonical record core")
     return [core.values(),rid,protection]
