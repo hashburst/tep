@@ -1,0 +1,14 @@
+{
+  "schema": "hashburst-tep-legacy-provenance-v1",
+  "import_mode": "forensic-byte-preserving",
+  "source_repository": "hashburst/node-installer",
+  "source_ref": "main",
+  "source_commit": "034d29603a5dcd4d38bbcf403c31d0d2d7eb734a",
+  "source_commit_verified": true,
+  "source_path": "tep/",
+  "target_repository": "hashburst/tep",
+  "target_path": "legacy/node-installer-v2.2.0/tep/",
+  "legacy_label": "node-installer-v2.2.0",
+  "immutability_policy": "legacy copy MUST NOT be edited; corrections belong outside legacy/",
+  "production_claim": "Repository evidence includes a v2.2 runtime adapter; live production equivalence remains subject to observer verification."
+}
