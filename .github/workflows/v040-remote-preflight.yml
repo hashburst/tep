@@ -13,6 +13,10 @@ jobs:
     runs-on: [self-hosted, Linux, X64, tep-testnet-153]
     timeout-minutes: 10
     steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Read-only host inventory
         env:
           EXPECTED_IP: "77.90.188.153"
@@ -110,6 +114,10 @@ jobs:
     runs-on: [self-hosted, Linux, X64, tep-testnet-154]
     timeout-minutes: 10
     steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Read-only host inventory
         env:
           EXPECTED_IP: "77.90.188.154"
@@ -127,6 +135,10 @@ jobs:
     runs-on: [self-hosted, Linux, X64, tep-testnet-155]
     timeout-minutes: 10
     steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Read-only host inventory
         env:
           EXPECTED_IP: "77.90.188.155"
@@ -144,6 +156,10 @@ jobs:
     runs-on: [self-hosted, Linux, X64, tep-testnet-157]
     timeout-minutes: 10
     steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Read-only host inventory
         env:
           EXPECTED_IP: "77.90.188.157"
