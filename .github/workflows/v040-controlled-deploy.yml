@@ -54,14 +54,7 @@ jobs:
           set -euo pipefail
           sudo -n /usr/local/sbin/hashburst-testnet-admin start
           for i in $(seq 1 20); do
-            if python3 - <<'PY'
-import json, urllib.request
-with urllib.request.urlopen("http://127.0.0.1:47840/health", timeout=2) as r:
-    data=json.load(r)
-assert data
-print(json.dumps(data, sort_keys=True))
-PY
-            then
+            if python3 -c 'import json,urllib.request; d=json.load(urllib.request.urlopen("http:\/\/127.0.0.1:47840\/health",timeout=2)); assert d; print(json.dumps(d,sort_keys=True))'; then
               echo "LOCAL_HEALTH_OK"
               exit 0
             fi
