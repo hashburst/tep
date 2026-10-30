@@ -30,8 +30,13 @@ install -m 0644 "$SRC/tools/testnet_multihost_probe_v040.py" "$stage/tools/testn
 install -m 0644 "$SRC/deploy/systemd/hashburst-tep-testnet.service" "$stage/deploy/systemd/hashburst-tep-testnet.service"
 install -m 0644 "$SRC/deploy/v040-testnet/PROVENANCE" "$stage/deploy/v040-testnet/PROVENANCE"
 
-python3 -m venv "$stage/venv"
-"$stage/venv/bin/python" -m pip install --disable-pip-version-check --no-input --require-hashes -r "$SRC/deploy/v040-testnet/requirements-peer.lock"
+python3 -m venv --system-site-packages "$stage/venv"
+"$stage/venv/bin/python" - <<'PY'
+import cryptography
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+assert Ed25519PrivateKey.generate()
+print("cryptography=" + cryptography.__version__)
+PY
 
 printf '%s\n' "${DEPLOYMENT_REVISION:-unknown}" > "$stage/deploy/v040-testnet/DEPLOYMENT_REVISION"
 
