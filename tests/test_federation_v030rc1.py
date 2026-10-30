@@ -32,4 +32,14 @@ class FederationV03Tests(unittest.TestCase):
   a=bytes.fromhex("01"*32);p=SovereigntyPolicy(bytes.fromhex("ee"*32),1,(a,a),(),())
   with self.assertRaises(ValueError):p.digest()
 
+ def test_equivocation_tracker(self):
+  t=EquivocationTracker();k=VoteKey(bytes.fromhex("aa"*32),3,9,self.v(1).validator_id);a=bytes.fromhex("11"*32);b=bytes.fromhex("22"*32)
+  self.assertTrue(t.observe(k,a));self.assertFalse(t.observe(k,a))
+  with self.assertRaises(ValueError):t.observe(k,b)
+ def test_partition_quorum(self):
+  self.assertTrue(partition_has_quorum(7,5));self.assertFalse(partition_has_quorum(7,4));self.assertFalse(partition_has_quorum(4,2))
+ def test_recovery_cursor_requires_forward_progress(self):
+  c=RecoveryCursor(bytes.fromhex("aa"*32),3,10,bytes.fromhex("bb"*32))
+  self.assertTrue(c.accepts_next(3,11));self.assertTrue(c.accepts_next(4,11));self.assertFalse(c.accepts_next(2,11));self.assertFalse(c.accepts_next(3,10))
+
 if __name__=="__main__":unittest.main(verbosity=2)
