@@ -49,12 +49,12 @@ v0.2.0-rc1 contains the foundational finality data structures and tests. Federat
 
 ## Repository structure
 
-- `docs/architecture/` — architecture and protocol boundaries
-- `docs/protocol/` — protocol definitions, decisions, conformance records and test vectors
-- `legacy/` — immutable imported TEP v2.2 implementation and provenance
-- `src/hashburst_tep/` — current protocol implementation
-- `tests/` — protocol, interoperability and release-conformance tests
-- `tools/` — observer and verification utilities
+- `docs/architecture/`: architecture and protocol boundaries
+- `docs/protocol/`: protocol definitions, decisions, conformance records and test vectors
+- `legacy/`: immutable imported TEP v2.2 implementation and provenance
+- `src/hashburst_tep/`: current protocol implementation
+- `tests/`: protocol, interoperability and release-conformance tests
+- `tools/`: observer and verification utilities
 
 ## Legacy implementation
 
