@@ -81,9 +81,9 @@ jobs:
           fi
           allowed="$(sudo -n -l)"
           for cmd in bootstrap start stop restart status enable disable daemon-reload; do
-            printf '%s\n' "$allowed" | grep -Fq "(root) NOPASSWD: $ADMIN $cmd"
+            grep -Fq "(root) NOPASSWD: $ADMIN $cmd" <<<"$allowed"
           done
-          if printf '%s\n' "$allowed" | grep -E 'NOPASSWD: (ALL|/bin/|/usr/bin/|/usr/sbin/)' >/dev/null; then
+          if grep -E 'NOPASSWD: (ALL|/bin/|/usr/bin/|/usr/sbin/)' <<<"$allowed" >/dev/null; then
             echo "ERROR: overly broad sudo rule"
             exit 21
           fi
@@ -110,7 +110,7 @@ jobs:
           test ! -e /opt/hashburst-tep-testnet/tools/testnet_peer_v040.py
           echo "DEPLOYMENT_PREREQUISITES_OK"
           allowed="$(sudo -n -l)"
-          printf '%s\n' "$allowed" | grep -Fq "(root) NOPASSWD: /usr/local/sbin/hashburst-testnet-admin install-payload /opt/actions-runner/actions-runner/_work/tep/tep"
+          grep -Fq "(root) NOPASSWD: /usr/local/sbin/hashburst-testnet-admin install-payload /opt/actions-runner/actions-runner/_work/tep/tep" <<<"$allowed"
           echo "INSTALL_BOUNDARY_OK"
 
   preflight-154:
