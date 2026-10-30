@@ -90,3 +90,40 @@ class SovereigntyPolicy:
     def permits_storage(self,domain_id): _b32("storage_domain",domain_id);return domain_id in self.storage_domains
     def permits_processing(self,domain_id): _b32("processing_domain",domain_id);return domain_id in self.processing_domains
     def permits_disclosure(self,domain_id): _b32("disclosure_domain",domain_id);return domain_id in self.disclosure_domains
+
+@dataclass(frozen=True)
+class VoteKey:
+    federation_id:bytes
+    validator_set_version:int
+    count:int
+    validator_id:bytes
+    def values(self):
+        _b32("federation_id",self.federation_id);_u64("validator_set_version",self.validator_set_version);_u64("count",self.count);_b32("validator_id",self.validator_id)
+        return [self.federation_id,self.validator_set_version,self.count,self.validator_id]
+
+class EquivocationTracker:
+    def __init__(self): self._votes={}
+    def observe(self,key,proposal_digest):
+        key.values();_b32("proposal_digest",proposal_digest)
+        k=tuple(key.values());old=self._votes.get(k)
+        if old is not None and old!=proposal_digest: raise ValueError("equivocation detected")
+        self._votes[k]=proposal_digest
+        return old is None
+
+def partition_has_quorum(active_validator_count,reachable_active_count):
+    _u64("active_validator_count",active_validator_count);_u64("reachable_active_count",reachable_active_count)
+    if active_validator_count==0 or reachable_active_count>active_validator_count:return False
+    return reachable_active_count>=((2*active_validator_count)//3+1)
+
+@dataclass(frozen=True)
+class RecoveryCursor:
+    federation_id:bytes
+    validator_set_version:int
+    finalized_count:int
+    finalized_block_id:bytes
+    def values(self):
+        _b32("federation_id",self.federation_id);_u64("validator_set_version",self.validator_set_version);_u64("finalized_count",self.finalized_count);_b32("finalized_block_id",self.finalized_block_id)
+        return [1,self.federation_id,self.validator_set_version,self.finalized_count,self.finalized_block_id]
+    def accepts_next(self,validator_set_version,count):
+        _u64("validator_set_version",validator_set_version);_u64("count",count)
+        return validator_set_version>=self.validator_set_version and count>self.finalized_count
