@@ -100,12 +100,7 @@ jobs:
           echo "deployment_revision=$GITHUB_SHA"
           grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' "$GITHUB_WORKSPACE/deploy/v040-testnet/PROVENANCE"
           grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' "$GITHUB_WORKSPACE/deploy/v040-testnet/PROVENANCE"
-          python3 - <<'PY'
-import cryptography
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-assert Ed25519PrivateKey.generate()
-print("cryptography=" + cryptography.__version__)
-PY
+          python3 -c 'import cryptography; from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey; assert Ed25519PrivateKey.generate(); print("cryptography=" + cryptography.__version__)'
           python3 -m venv --help >/dev/null
           test ! -e /etc/systemd/system/hashburst-tep-testnet.service
           test ! -e /opt/hashburst-tep-testnet/tools/testnet_peer_v040.py
