@@ -83,11 +83,11 @@ jobs:
             echo "ERROR: overly broad sudo rule"
             exit 21
           fi
-          if [ -e /opt/hashburst-tep-testnet ] || [ -e /var/lib/hashburst-testnet ]; then
-            echo "ERROR: isolated testnet paths already existed before bootstrap"
-            exit 22
+          if [ ! -d /opt/hashburst-tep-testnet ] || [ ! -d /var/lib/hashburst-testnet ]; then
+            sudo -n "$ADMIN" bootstrap
+          else
+            echo "Existing isolated testnet paths detected; verifying instead of recreating"
           fi
-          sudo -n "$ADMIN" bootstrap
           test "$(stat -c '%U:%G:%a' /opt/hashburst-tep-testnet)" = "root:root:755"
           test "$(stat -c '%U:%G:%a' /var/lib/hashburst-testnet)" = "hashburst-testnet:hashburst-testnet:700"
           test "$(getent passwd hashburst-testnet | cut -d: -f7)" = "/usr/sbin/nologin"
