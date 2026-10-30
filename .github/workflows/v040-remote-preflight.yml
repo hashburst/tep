@@ -63,6 +63,36 @@ jobs:
           fi
           echo "PREFLIGHT_COMPLETE"
 
+      - name: Verify restricted privilege boundary and bootstrap isolated paths
+        shell: bash
+        run: &restricted_bootstrap |
+          set -euo pipefail
+          ADMIN=/usr/local/sbin/hashburst-testnet-admin
+          test "$(id -un)" = github-runner
+          test -x "$ADMIN"
+          test "$(stat -c '%U:%G:%a' "$ADMIN")" = "root:root:755"
+          if sudo -n true 2>/dev/null; then
+            echo "ERROR: unrestricted passwordless sudo"
+            exit 20
+          fi
+          allowed="$(sudo -n -l)"
+          for cmd in bootstrap start stop restart status enable disable daemon-reload; do
+            printf '%s\n' "$allowed" | grep -Fq "(root) NOPASSWD: $ADMIN $cmd"
+          done
+          if printf '%s\n' "$allowed" | grep -E 'NOPASSWD: (ALL|/bin/|/usr/bin/|/usr/sbin/)' >/dev/null; then
+            echo "ERROR: overly broad sudo rule"
+            exit 21
+          fi
+          if [ -e /opt/hashburst-tep-testnet ] || [ -e /var/lib/hashburst-testnet ]; then
+            echo "ERROR: isolated testnet paths already existed before bootstrap"
+            exit 22
+          fi
+          sudo -n "$ADMIN" bootstrap
+          test "$(stat -c '%U:%G:%a' /opt/hashburst-tep-testnet)" = "root:root:755"
+          test "$(stat -c '%U:%G:%a' /var/lib/hashburst-testnet)" = "hashburst-testnet:hashburst-testnet:700"
+          test "$(getent passwd hashburst-testnet | cut -d: -f7)" = "/usr/sbin/nologin"
+          echo "BOUNDARY_AND_BOOTSTRAP_OK"
+
   preflight-154:
     runs-on: [self-hosted, Linux, X64, tep-testnet-154]
     timeout-minutes: 10
@@ -73,6 +103,9 @@ jobs:
           RUNNER_LABEL: "tep-testnet-154"
         shell: bash
         run: *preflight
+      - name: Verify restricted privilege boundary and bootstrap isolated paths
+        shell: bash
+        run: *restricted_bootstrap
 
   preflight-155:
     runs-on: [self-hosted, Linux, X64, tep-testnet-155]
@@ -84,6 +117,9 @@ jobs:
           RUNNER_LABEL: "tep-testnet-155"
         shell: bash
         run: *preflight
+      - name: Verify restricted privilege boundary and bootstrap isolated paths
+        shell: bash
+        run: *restricted_bootstrap
 
   preflight-157:
     runs-on: [self-hosted, Linux, X64, tep-testnet-157]
@@ -95,3 +131,6 @@ jobs:
           RUNNER_LABEL: "tep-testnet-157"
         shell: bash
         run: *preflight
+      - name: Verify restricted privilege boundary and bootstrap isolated paths
+        shell: bash
+        run: *restricted_bootstrap
