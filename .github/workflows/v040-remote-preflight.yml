@@ -109,6 +109,9 @@ jobs:
           test ! -e /etc/systemd/system/hashburst-tep-testnet.service
           test ! -e /opt/hashburst-tep-testnet/tools/testnet_peer_v040.py
           echo "DEPLOYMENT_PREREQUISITES_OK"
+          allowed="$(sudo -n -l)"
+          printf '%s\n' "$allowed" | grep -Fq "(root) NOPASSWD: /usr/local/sbin/hashburst-testnet-admin install-payload /opt/actions-runner/actions-runner/_work/tep/tep"
+          echo "INSTALL_BOUNDARY_OK"
 
   preflight-154:
     runs-on: [self-hosted, Linux, X64, tep-testnet-154]
