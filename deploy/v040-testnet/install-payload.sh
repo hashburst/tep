@@ -30,8 +30,7 @@ install -m 0644 "$SRC/tools/testnet_multihost_probe_v040.py" "$stage/tools/testn
 install -m 0644 "$SRC/deploy/systemd/hashburst-tep-testnet.service" "$stage/deploy/systemd/hashburst-tep-testnet.service"
 install -m 0644 "$SRC/deploy/v040-testnet/PROVENANCE" "$stage/deploy/v040-testnet/PROVENANCE"
 
-python3 -m venv --system-site-packages "$stage/venv"
-"$stage/venv/bin/python" - <<'PY'
+python3 - <<'PY'
 import cryptography
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 assert Ed25519PrivateKey.generate()
@@ -40,7 +39,7 @@ PY
 
 printf '%s\n' "${DEPLOYMENT_REVISION:-unknown}" > "$stage/deploy/v040-testnet/DEPLOYMENT_REVISION"
 
-if [ -e "$DEST/venv" ] || [ -e "$DEST/tools/testnet_peer_v040.py" ]; then
+if [ -e "$DEST/tools/testnet_peer_v040.py" ]; then
   echo "existing payload detected; refusing destructive replacement" >&2
   exit 65
 fi
