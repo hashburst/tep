@@ -17,7 +17,7 @@ concurrency:
 jobs:
   deploy-153:
     runs-on: [self-hosted, tep-testnet-153]
-    steps: &steps
+    steps:
       - name: Checkout deployment revision
         uses: actions/checkout@v4
         with:
@@ -72,12 +72,114 @@ PY
 
   deploy-154:
     runs-on: [self-hosted, tep-testnet-154]
-    steps: *steps
+    steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify provenance and restricted boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' deploy/v040-testnet/PROVENANCE
+          grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' deploy/v040-testnet/PROVENANCE
+          allowed="$(sudo -n -l)"
+          grep -Fq "(root) NOPASSWD: /usr/local/sbin/hashburst-testnet-admin install-payload /opt/actions-runner/actions-runner/_work/tep/tep" <<<"$allowed"
+          if sudo -n true 2>/dev/null; then exit 20; fi
+      - name: Install verified isolated payload
+        shell: bash
+        env:
+          DEPLOYMENT_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
+          test -f /etc/systemd/system/hashburst-tep-testnet.service
+          grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' /opt/hashburst-tep-testnet/deploy/v040-testnet/PROVENANCE
+          test "$(stat -c '%U:%G:%a' /var/lib/hashburst-testnet)" = "hashburst-testnet:hashburst-testnet:700"
+      - name: Start testnet service and verify local health
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/hashburst-testnet-admin start
+          for i in $(seq 1 20); do
+            if python3 -c 'import json,urllib.request; d=json.load(urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=2)); assert d; print(json.dumps(d,sort_keys=True))'; then echo LOCAL_HEALTH_OK; exit 0; fi
+            sleep 1
+          done
+          sudo -n /usr/local/sbin/hashburst-testnet-admin status || true
+          exit 1
 
   deploy-155:
     runs-on: [self-hosted, tep-testnet-155]
-    steps: *steps
+    steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify provenance and restricted boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' deploy/v040-testnet/PROVENANCE
+          grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' deploy/v040-testnet/PROVENANCE
+          allowed="$(sudo -n -l)"
+          grep -Fq "(root) NOPASSWD: /usr/local/sbin/hashburst-testnet-admin install-payload /opt/actions-runner/actions-runner/_work/tep/tep" <<<"$allowed"
+          if sudo -n true 2>/dev/null; then exit 20; fi
+      - name: Install verified isolated payload
+        shell: bash
+        env:
+          DEPLOYMENT_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
+          test -f /etc/systemd/system/hashburst-tep-testnet.service
+          grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' /opt/hashburst-tep-testnet/deploy/v040-testnet/PROVENANCE
+          test "$(stat -c '%U:%G:%a' /var/lib/hashburst-testnet)" = "hashburst-testnet:hashburst-testnet:700"
+      - name: Start testnet service and verify local health
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/hashburst-testnet-admin start
+          for i in $(seq 1 20); do
+            if python3 -c 'import json,urllib.request; d=json.load(urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=2)); assert d; print(json.dumps(d,sort_keys=True))'; then echo LOCAL_HEALTH_OK; exit 0; fi
+            sleep 1
+          done
+          sudo -n /usr/local/sbin/hashburst-testnet-admin status || true
+          exit 1
 
   deploy-157:
     runs-on: [self-hosted, tep-testnet-157]
-    steps: *steps
+    steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify provenance and restricted boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' deploy/v040-testnet/PROVENANCE
+          grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' deploy/v040-testnet/PROVENANCE
+          allowed="$(sudo -n -l)"
+          grep -Fq "(root) NOPASSWD: /usr/local/sbin/hashburst-testnet-admin install-payload /opt/actions-runner/actions-runner/_work/tep/tep" <<<"$allowed"
+          if sudo -n true 2>/dev/null; then exit 20; fi
+      - name: Install verified isolated payload
+        shell: bash
+        env:
+          DEPLOYMENT_REVISION: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
+          test -f /etc/systemd/system/hashburst-tep-testnet.service
+          grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' /opt/hashburst-tep-testnet/deploy/v040-testnet/PROVENANCE
+          test "$(stat -c '%U:%G:%a' /var/lib/hashburst-testnet)" = "hashburst-testnet:hashburst-testnet:700"
+      - name: Start testnet service and verify local health
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/hashburst-testnet-admin start
+          for i in $(seq 1 20); do
+            if python3 -c 'import json,urllib.request; d=json.load(urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=2)); assert d; print(json.dumps(d,sort_keys=True))'; then echo LOCAL_HEALTH_OK; exit 0; fi
+            sleep 1
+          done
+          sudo -n /usr/local/sbin/hashburst-testnet-admin status || true
+          exit 1
