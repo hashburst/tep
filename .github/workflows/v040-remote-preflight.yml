@@ -93,6 +93,24 @@ jobs:
           test "$(getent passwd hashburst-testnet | cut -d: -f7)" = "/usr/sbin/nologin"
           echo "BOUNDARY_AND_BOOTSTRAP_OK"
 
+      - name: Verify deployment prerequisites without changing packages
+        shell: bash
+        run: &deploy_prereq |
+          set -euo pipefail
+          echo "deployment_revision=$GITHUB_SHA"
+          grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' "$GITHUB_WORKSPACE/deploy/v040-testnet/PROVENANCE"
+          grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' "$GITHUB_WORKSPACE/deploy/v040-testnet/PROVENANCE"
+          python3 - <<'PY'
+import cryptography
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+assert Ed25519PrivateKey.generate()
+print("cryptography=" + cryptography.__version__)
+PY
+          python3 -m venv --help >/dev/null
+          test ! -e /etc/systemd/system/hashburst-tep-testnet.service
+          test ! -e /opt/hashburst-tep-testnet/tools/testnet_peer_v040.py
+          echo "DEPLOYMENT_PREREQUISITES_OK"
+
   preflight-154:
     runs-on: [self-hosted, Linux, X64, tep-testnet-154]
     timeout-minutes: 10
@@ -106,6 +124,9 @@ jobs:
       - name: Verify restricted privilege boundary and bootstrap isolated paths
         shell: bash
         run: *restricted_bootstrap
+      - name: Verify deployment prerequisites without changing packages
+        shell: bash
+        run: *deploy_prereq
 
   preflight-155:
     runs-on: [self-hosted, Linux, X64, tep-testnet-155]
@@ -120,6 +141,9 @@ jobs:
       - name: Verify restricted privilege boundary and bootstrap isolated paths
         shell: bash
         run: *restricted_bootstrap
+      - name: Verify deployment prerequisites without changing packages
+        shell: bash
+        run: *deploy_prereq
 
   preflight-157:
     runs-on: [self-hosted, Linux, X64, tep-testnet-157]
@@ -134,3 +158,6 @@ jobs:
       - name: Verify restricted privilege boundary and bootstrap isolated paths
         shell: bash
         run: *restricted_bootstrap
+      - name: Verify deployment prerequisites without changing packages
+        shell: bash
+        run: *deploy_prereq
