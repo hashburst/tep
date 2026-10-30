@@ -6,6 +6,7 @@ on:
       - testnet/v0.4.0-remote-deploy
     paths:
       - .github/workflows/v040-controlled-deploy.yml
+      - deploy/v040-testnet/install-payload.sh
 
 permissions:
   contents: read
