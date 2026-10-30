@@ -40,8 +40,15 @@ PY
 printf '%s\n' "${DEPLOYMENT_REVISION:-unknown}" > "$stage/deploy/v040-testnet/DEPLOYMENT_REVISION"
 
 if [ -e "$DEST/tools/testnet_peer_v040.py" ]; then
-  echo "existing payload detected; refusing destructive replacement" >&2
-  exit 65
+  for rel in tools/testnet_peer_v040.py tools/testnet_multihost_probe_v040.py deploy/systemd/hashburst-tep-testnet.service deploy/v040-testnet/PROVENANCE; do
+    test -f "$DEST/$rel"
+  done
+  grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' "$DEST/deploy/v040-testnet/PROVENANCE"
+  grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' "$DEST/deploy/v040-testnet/PROVENANCE"
+  install -m 0644 "$DEST/deploy/systemd/hashburst-tep-testnet.service" /etc/systemd/system/hashburst-tep-testnet.service
+  systemctl daemon-reload
+  echo "PAYLOAD_ALREADY_VALID"
+  exit 0
 fi
 
 cp -a "$stage/." "$DEST/"
