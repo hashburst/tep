@@ -1,0 +1,21 @@
+name: TEP v0.4.0 multi-host tooling
+
+on:
+  push:
+    branches: [ "testnet/v0.4.0-multihost" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  multihost-tooling:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install cryptography chiavdf
+      - run: python -m unittest discover -s tests -p 'test_*.py' -v

@@ -1,0 +1,21 @@
+[Unit]
+Description=HashBurst TEP v0.4.0 testnet peer
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hashburst-testnet
+Group=hashburst-testnet
+Environment=PYTHONPATH=/opt/hashburst-tep-testnet/src
+ExecStart=/usr/bin/python3 /opt/hashburst-tep-testnet/tools/testnet_peer_v040.py --listen 0.0.0.0 --port 47840 --state /var/lib/hashburst-testnet
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/hashburst-testnet
+
+[Install]
+WantedBy=multi-user.target
