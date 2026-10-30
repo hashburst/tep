@@ -1,0 +1,76 @@
+name: TEP v0.4.0 remote preflight
+
+on:
+  push:
+    branches: [ "testnet/v0.4.0-remote-deploy" ]
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: tep-testnet-153
+            expected_ip: 77.90.188.153
+          - runner: tep-testnet-154
+            expected_ip: 77.90.188.154
+          - runner: tep-testnet-155
+            expected_ip: 77.90.188.155
+          - runner: tep-testnet-157
+            expected_ip: 77.90.188.157
+    runs-on: [self-hosted, Linux, X64, ${{ matrix.runner }}]
+    timeout-minutes: 10
+    steps:
+      - name: Read-only host inventory
+        shell: bash
+        env:
+          EXPECTED_IP: ${{ matrix.expected_ip }}
+          RUNNER_LABEL: ${{ matrix.runner }}
+        run: |
+          set -eu
+          echo "=== HASHBURST TEP TESTNET PREFLIGHT ==="
+          echo "utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "runner_label=$RUNNER_LABEL"
+          echo "expected_ip=$EXPECTED_IP"
+          echo "hostname=$(hostname)"
+          echo "fqdn=$(hostname -f 2>/dev/null || true)"
+          echo "user=$(id -un)"
+          id
+          uname -a
+          if [ -r /etc/os-release ]; then cat /etc/os-release; fi
+          python3 --version 2>&1 || true
+          git --version 2>&1 || true
+          echo "--- addresses ---"
+          ip -brief address 2>/dev/null || true
+          echo "--- routes ---"
+          ip route 2>/dev/null || true
+          echo "--- listeners of interest ---"
+          ss -lntup 2>/dev/null | grep -E ':(47777|47778|47780|47781|47840)([[:space:]]|$)' || true
+          echo "--- HashBurst services, metadata only ---"
+          systemctl list-units --type=service --all --no-pager 2>/dev/null | grep -Ei 'hashburst|tep' || true
+          echo "--- HashBurst paths, metadata only ---"
+          for p in /opt/hashburst /opt/hashburst-tep /opt/hashburst-tep-testnet /var/lib/hashburst /var/lib/hashburst-testnet; do
+            if [ -e "$p" ]; then ls -ld "$p"; else echo "absent $p"; fi
+          done
+          echo "--- disk ---"
+          df -h / /opt /var 2>/dev/null || true
+          echo "--- firewall metadata ---"
+          if command -v ufw >/dev/null 2>&1; then ufw status 2>&1 || true; fi
+          if command -v firewall-cmd >/dev/null 2>&1; then firewall-cmd --state 2>&1 || true; fi
+          echo "--- privilege boundary ---"
+          if sudo -n true 2>/dev/null; then
+            echo "ERROR: github-runner has passwordless sudo"
+            exit 20
+          else
+            echo "OK: no passwordless sudo"
+          fi
+          echo "--- expected address check ---"
+          if ip -o addr 2>/dev/null | grep -Fq "$EXPECTED_IP"; then
+            echo "OK: expected IP is locally assigned"
+          else
+            echo "NOTICE: expected public IP not present on a local interface (possible NAT/provider routing)"
+          fi
+          echo "PREFLIGHT_COMPLETE"
