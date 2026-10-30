@@ -1,0 +1,21 @@
+name: TEP v0.3.0 RC1 conformance
+
+on:
+  push:
+    branches: [ "release/v0.3.0-rc1" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  conformance:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install cryptography chiavdf
+      - run: python -m unittest discover -s tests -p 'test_*.py' -v
