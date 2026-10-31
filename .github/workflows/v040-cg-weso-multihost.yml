@@ -46,8 +46,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          export PYTHONPATH="$GITHUB_WORKSPACE/src"
-          .venv-cg-weso/bin/python - <<'PY'
+          export PYTHONPATH="$GITHUB_WORKSPACE/.cg-weso-deps:$GITHUB_WORKSPACE/src"
+          python3 - <<'PY'
           import hashlib,json
           import chiavdf
           from hashburst_tep.ledger import poh_input
