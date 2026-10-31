@@ -36,7 +36,7 @@ class EnrollmentCertificate:
         for n,v in (("network_id",self.network_id),("node_id",self.node_id),("node_public_key",self.node_public_key),("controller_id",self.controller_id)):_b32(n,v)
         if self.not_after<=self.not_before: raise ValueError("invalid certificate validity interval")
         if self.scope in FORBIDDEN_SCOPES or self.scope not in ALLOWED_SCOPES: raise ValueError("scope is not enrollment-authorizable")
-        return [1,self.serial,self.network_id,self.node_id,self.node_public_key,self.scope,self.not_before,self.not_after,self.controller_id]
+        return [1,self.serial,self.network_id,self.node_id,self.node_public_key,self.scope.encode("ascii"),self.not_before,self.not_after,self.controller_id]
 
     def message(self): return ENROLLMENT_CERT_DOMAIN+dumps(self.unsigned_values())
     def certificate_id(self): return sha3_256(self.message()+self.signature).digest()
