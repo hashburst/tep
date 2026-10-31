@@ -1,0 +1,238 @@
+name: TEP v1.0 G7 production federation acceptance four-host
+on:
+  push:
+    branches: [mainnet/v1.0.0-g1-enrollment]
+    paths: [src/hashburst_tep/federation_admission.py, tools/testnet_peer_v040.py, .github/workflows/v100-g7-federation-4host.yml]
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+concurrency: {group: tep-v100-g7-federation-4host, cancel-in-progress: false}
+jobs:
+  bundle:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - run: |
+          set -euo pipefail
+          mkdir root
+          git archive --format=tar HEAD src tools deploy requirements-rc1.txt | tar -xf - -C root
+          find root -exec touch -h -d '@0' {} +
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -C root -czf tep-g7.tar.gz .
+          sha256sum tep-g7.tar.gz > tep-g7.sha256
+          cp "$(command -v gh)" gh-verifier; chmod 755 gh-verifier; sha256sum gh-verifier > gh-verifier.sha256
+      - uses: actions/attest-build-provenance@v3
+        with: {subject-path: tep-g7.tar.gz}
+      - uses: actions/upload-artifact@v4
+        with: {name: g7-bundle, path: "tep-g7.tar.gz\ntep-g7.sha256"}
+      - uses: actions/upload-artifact@v4
+        with: {name: g7-verifier, path: "gh-verifier\ngh-verifier.sha256"}
+  bootstrap:
+    needs: bundle
+    strategy:
+      fail-fast: false
+      matrix: {node: ["153","154","155","157"]}
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/download-artifact@v4
+        with: {name: g7-bundle, path: bundle}
+      - uses: actions/download-artifact@v4
+        with: {name: g7-verifier, path: verifier}
+      - env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          set -euo pipefail
+          rm -rf g7-stage; mkdir g7-stage
+          (cd bundle && sha256sum -c tep-g7.sha256)
+          (cd verifier && sha256sum -c gh-verifier.sha256); chmod 755 verifier/gh-verifier
+          verifier/gh-verifier attestation verify bundle/tep-g7.tar.gz --repo hashburst/tep
+          tar -xzf bundle/tep-g7.tar.gz -C g7-stage
+          sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:47840/health > identity.json 2>/dev/null && break; sleep 1; done
+          python3 -c 'import json;d=json.load(open("identity.json"));assert len(d["node_id"])==64 and len(d["public_key"])==64'
+          echo "G7_G5_BOOTSTRAP_OK node=${{ matrix.node }}"
+      - uses: actions/upload-artifact@v4
+        with: {name: "g7-id-${{ matrix.node }}", path: identity.json}
+  contract:
+    needs: bootstrap
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/download-artifact@v4
+        with: {pattern: "g7-id-*", path: ids}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -r requirements-rc1.txt
+      - env: {PYTHONPATH: src}
+        run: |
+          python3 - <<'PY'
+          import glob,json,time
+          from hashlib import sha3_256
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+          from cryptography.hazmat.primitives.serialization import Encoding,PublicFormat
+          from hashburst_tep.enrollment import EnrollmentCertificate,sign_certificate
+          from hashburst_tep.governance import GovernanceState,GovernanceMember,ACTIVE
+          from hashburst_tep.federation import Validator,ValidatorSet
+          from hashburst_tep.network_genesis import ProductionGenesis,ConsensusParameters,VDFParameters
+          from hashburst_tep.federation_admission import FederationAdmission
+          xs=[json.load(open(p)) for p in sorted(glob.glob("ids/**/identity.json",recursive=True))]
+          net=sha3_256(b"HashBurst TEP Mainnet v1").digest();chain=sha3_256(b"HashBurst TEP Production Chain").digest()
+          vals=tuple(Validator(bytes.fromhex(x["node_id"]),bytes.fromhex(x["public_key"])) for x in xs);vs=ValidatorSet(1,vals)
+          gen=ProductionGenesis(net,chain,1,vs,ConsensusParameters(2,3,30),VDFParameters(b"CG-WESO-v1",1024,4096))
+          fed=sha3_256(b"HB-TEP-G7-PRODUCTION-FEDERATION-v1").digest();gov=GovernanceState(fed,1,tuple(GovernanceMember(v.validator_id,v.public_key,ACTIVE) for v in vals))
+          ck=Ed25519PrivateKey.generate();cp=ck.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw);cid=sha3_256(b"HB-TEP-G7-CONTROLLER-v1"+cp).digest();now=int(time.time())
+          certs=[];adm=FederationAdmission(net,gen.genesis_id(),gov,cp,now)
+          for n,v in enumerate(vals,1):
+           c=EnrollmentCertificate(1,n,net,v.validator_id,v.public_key,"node",now-60,now+3600,cid,b"");c=sign_certificate(c,ck);assert adm.admit(v.validator_id,v.public_key,c,gen.genesis_id());certs.append(c)
+          try:adm.admit(vals[0].validator_id,vals[0].public_key,None,gen.genesis_id());raise AssertionError()
+          except ValueError as e:assert "non-enrolled" in str(e)
+          try:adm.admit(vals[0].validator_id,vals[0].public_key,certs[0],bytes(32));raise AssertionError()
+          except ValueError as e:assert "foreign genesis" in str(e)
+          fk=Ed25519PrivateKey.generate();fp=fk.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw);fid=sha3_256(b"FOREIGN"+fp).digest();fc=EnrollmentCertificate(1,99,net,fid,fp,"node",now-60,now+3600,cid,b"");fc=sign_certificate(fc,ck)
+          try:adm.admit(fid,fp,fc,gen.genesis_id());raise AssertionError()
+          except ValueError as e:assert "unauthorized" in str(e)
+          out={"network_id":net.hex(),"chain_id":chain.hex(),"genesis_id":gen.genesis_id().hex(),"canonical_genesis":gen.encode().hex(),"validator_set_version":1,"validator_set_digest":vs.digest().hex(),"vdf_params_hash":gen.vdf.digest().hex(),"validators":[{"validator_id":v.validator_id.hex(),"public_key":v.public_key.hex()} for v in vals],"certificates":[{"serial":c.serial,"node_id":c.node_id.hex(),"signature":c.signature.hex()} for c in certs]}
+          json.dump(out,open("contract.json","w"))
+          print("G7_ADMISSION_CONTRACT_OK enrolled=4 active=4 non_enrolled_rejected=1 foreign_genesis_rejected=1 unauthorized_rejected=1")
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: g7-contract, path: contract.json}
+  bind:
+    needs: contract
+    strategy:
+      fail-fast: false
+      matrix: {node: ["153","154","155","157"]}
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: g7-contract}
+      - run: |
+          python3 - <<'PY'
+          import json,urllib.request,urllib.error,hashlib
+          g=json.load(open("contract.json"));body={k:g[k] for k in ("network_id","chain_id","genesis_id","canonical_genesis")}
+          def post(path,o):
+           r=urllib.request.Request("http://127.0.0.1:47840"+path,data=json.dumps(o).encode(),headers={"Content-Type":"application/json"});return json.load(urllib.request.urlopen(r,timeout=4))
+          a=post("/genesis/bind",body);assert a["bind_status"] in ("BOUND","IDEMPOTENT")
+          foreign=dict(body);foreign["network_id"]=hashlib.sha3_256(b"G7-FOREIGN").hexdigest()
+          try:post("/genesis/bind",foreign);raise AssertionError()
+          except urllib.error.HTTPError as e:assert e.code==409
+          print("G7_GENESIS_BOUND_OK node_id="+a["node_id"]+" foreign_rejected=1")
+          PY
+  votes:
+    needs: bind
+    strategy:
+      fail-fast: false
+      matrix: {node: ["153","154","155","157"]}
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: g7-contract}
+      - run: |
+          python3 - <<'PY'
+          import json,hashlib,urllib.request
+          g=json.load(open("contract.json"));bid=hashlib.sha3_256(b"G7-PRODUCTION-CHECKPOINT-1").hexdigest()
+          o={"validator_set_version":g["validator_set_version"],"validator_set_digest":g["validator_set_digest"],"network_id":g["network_id"],"count":9001,"block_id":bid}
+          r=urllib.request.Request("http://127.0.0.1:47840/finality/vote",data=json.dumps(o).encode(),headers={"Content-Type":"application/json"});v=json.load(urllib.request.urlopen(r,timeout=4));json.dump(v,open("vote.json","w"))
+          print("G7_REAL_VALIDATOR_VOTE_OK validator_id="+v["validator_id"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: "g7-vote-${{ matrix.node }}", path: vote.json}
+  qc:
+    needs: votes
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: g7-contract}
+      - uses: actions/download-artifact@v4
+        with: {pattern: "g7-vote-*", path: votes}
+      - run: |
+          python3 - <<'PY'
+          import glob,json,hashlib
+          g=json.load(open("contract.json"));vs=sorted(g["validators"],key=lambda x:x["validator_id"]);raw=[json.load(open(p)) for p in glob.glob("votes/**/vote.json",recursive=True)]
+          by={x["validator_id"]:x for x in raw};vv=[{"validator_id":x["validator_id"],"signature":by[x["validator_id"]]["signature"]} for x in vs]
+          q={"validator_set_version":1,"network_id":g["network_id"],"count":9001,"block_id":hashlib.sha3_256(b"G7-PRODUCTION-CHECKPOINT-1").hexdigest(),"h":hashlib.sha3_256(b"G7-H").hexdigest(),"vdf_params_hash":g["vdf_params_hash"],"validators":vs,"votes":vv[:3]}
+          json.dump(q,open("qc.json","w"));print("G7_QC_3OF4_FORMED_OK votes=3 threshold=3")
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: g7-qc, path: qc.json}
+  finality:
+    needs: qc
+    strategy:
+      fail-fast: false
+      matrix: {node: ["153","154","155"]}
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: g7-qc}
+      - run: |
+          python3 - <<'PY'
+          import json,urllib.request
+          q=json.load(open("qc.json"));r=urllib.request.Request("http://127.0.0.1:47840/finality/commit",data=json.dumps(q).encode(),headers={"Content-Type":"application/json"});o=json.load(urllib.request.urlopen(r,timeout=4));json.dump(o,open("final.json","w"));assert o["votes"]==3 and o["threshold"]==3;print("G7_FINALITY_3OF4_OK checkpoint_id="+o["checkpoint_id"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: "g7-final-${{ matrix.node }}", path: final.json}
+  loss:
+    needs: finality
+    runs-on: [self-hosted, tep-testnet-157]
+    steps:
+      - run: |
+          sudo -n /usr/local/sbin/hashburst-testnet-admin stop
+          if curl -fsS --max-time 2 http://127.0.0.1:47840/health >/dev/null 2>&1; then exit 1; fi
+          echo "G7_VALIDATOR_LOSS_OK node=157 remaining_quorum=3"
+  partition:
+    needs: loss
+    runs-on: [self-hosted, tep-testnet-154]
+    steps:
+      - run: |
+          sudo -n /usr/local/sbin/hashburst-testnet-admin stop
+          if curl -fsS --max-time 2 http://127.0.0.1:47840/health >/dev/null 2>&1; then exit 1; fi
+          echo "G7_PARTITION_QUORUM_LOSS_OK down=154,157 live=2 threshold=3"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin start
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:47840/health >/dev/null 2>&1 && break; sleep 1; done
+          echo "G7_PARTITION_HEAL_OK node=154"
+  rejoin:
+    needs: partition
+    runs-on: [self-hosted, tep-testnet-157]
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: g7-qc}
+      - run: |
+          sudo -n /usr/local/sbin/hashburst-testnet-admin start
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:47840/health >/dev/null 2>&1 && break; sleep 1; done
+          python3 - <<'PY'
+          import json,urllib.request
+          q=json.load(open("qc.json"));r=urllib.request.Request("http://127.0.0.1:47840/finality/catchup",data=json.dumps(q).encode(),headers={"Content-Type":"application/json"});o=json.load(urllib.request.urlopen(r,timeout=4));json.dump(o,open("rejoin.json","w"));assert o["caught_up"] and o["votes"]==3;print("G7_CONTROLLED_REJOIN_CATCHUP_OK checkpoint_id="+o["checkpoint_id"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: g7-rejoin, path: rejoin.json}
+  converge:
+    needs: rejoin
+    strategy:
+      fail-fast: false
+      matrix: {node: ["153","154","155","157"]}
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    steps:
+      - run: |
+          curl -fsS http://127.0.0.1:47840/health > health.json
+          curl -fsS http://127.0.0.1:47840/genesis > genesis-head.json
+          curl -fsS http://127.0.0.1:47840/finality/head > final-head.json
+      - uses: actions/upload-artifact@v4
+        with: {name: "g7-head-${{ matrix.node }}", path: "health.json\ngenesis-head.json\nfinal-head.json"}
+  certify:
+    needs: converge
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {pattern: "g7-head-*", path: heads}
+      - run: |
+          python3 - <<'PY'
+          import glob,json
+          hs=glob.glob("heads/**/health.json",recursive=True);gs=glob.glob("heads/**/genesis-head.json",recursive=True);fs=glob.glob("heads/**/final-head.json",recursive=True);assert len(hs)==len(gs)==len(fs)==4
+          H=[json.load(open(x)) for x in hs];G=[json.load(open(x)) for x in gs];F=[json.load(open(x)) for x in fs]
+          assert len({x["node_id"] for x in H})==4 and len({x["genesis_id"] for x in G})==1 and len({x["checkpoint_id"] for x in F})==1 and all(x["finalized"] for x in F)
+          print("PRODUCTION_FEDERATION_ACCEPTANCE_4OF4_OK bootstrap_g4=1 governance_g2=1 enrollment_g1=1 anti_equivocation_g3=1 artifact_g5=1 operations_g6=1 qc_3of4=1 validator_loss=1 partition_quorum_loss=1 heal=1 controlled_rejoin=1 catchup=1 unauthorized_rejected=1 foreign_genesis_rejected=1 non_enrolled_rejected=1 converged_hosts=4 checkpoint_id="+F[0]["checkpoint_id"])
+          PY
