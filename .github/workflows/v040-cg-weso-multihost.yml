@@ -1,0 +1,94 @@
+name: TEP v0.4.0 real multi-host CG-WESO PoH gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [testnet/v0.4.0-remote-deploy]
+    paths:
+      - .github/workflows/v040-cg-weso-multihost.yml
+      - src/hashburst_tep/vdf/**
+      - src/hashburst_tep/poh/**
+      - src/hashburst_tep/ledger.py
+      - requirements-rc1.txt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tep-v040-cg-weso-multihost
+  cancel-in-progress: false
+
+jobs:
+  cg-weso-peer:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["153", "154", "155", "157"]
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify real CG-WESO dependency and execute deterministic PoH proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$GITHUB_WORKSPACE/src"
+          python3 - <<'PY'
+          import hashlib,json
+          import chiavdf
+          from hashburst_tep.ledger import poh_input
+          from hashburst_tep.vdf import CGWesoV1
+
+          assert getattr(chiavdf,"__version__",None) == "1.2.1", getattr(chiavdf,"__version__",None)
+          network_id=bytes.fromhex("a5"*32)
+          count=4
+          previous_h=bytes.fromhex("51"*32)
+          previous_block_id=bytes.fromhex("52"*32)
+          vdf_params_hash=hashlib.sha3_256(b"HB-TEP-CG-WESO-v1|1024|4096").digest()
+          challenge=poh_input(network_id,count,previous_h,previous_block_id,vdf_params_hash)
+          adapter=CGWesoV1()
+          result=adapter.evaluate(challenge,4096)
+          assert adapter.verify(challenge,result)
+          assert len(result.output)==100 and len(result.proof)==100
+          row={
+            "suite":adapter.suite_id,
+            "iterations":result.iterations,
+            "challenge":challenge.hex(),
+            "output":result.output.hex(),
+            "proof":result.proof.hex(),
+            "output_sha3":hashlib.sha3_256(result.output).hexdigest(),
+            "proof_sha3":hashlib.sha3_256(result.proof).hexdigest(),
+          }
+          open("cg-weso-result.json","w").write(json.dumps(row,sort_keys=True))
+          print("CG_WESO_REAL_VERIFY_OK suite=%s iterations=%d challenge=%s output_sha3=%s proof_sha3=%s"%(row["suite"],row["iterations"],row["challenge"],row["output_sha3"],row["proof_sha3"]),flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cg-weso-result-${{ matrix.node }}
+          path: cg-weso-result.json
+          if-no-files-found: error
+
+  verify-four-host-cg-weso:
+    needs: [cg-weso-peer]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cg-weso-result-*
+          path: results
+      - name: Verify deterministic four-host CG-WESO convergence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob,json
+          fs=glob.glob("results/**/cg-weso-result.json",recursive=True)
+          if len(fs)!=4: raise SystemExit("CG_WESO_RESULT_COUNT_NOT_4 "+repr(fs))
+          rows=[json.load(open(f)) for f in fs]
+          for key in ("suite","iterations","challenge","output","proof","output_sha3","proof_sha3"):
+            if len({r[key] for r in rows})!=1: raise SystemExit("CG_WESO_DIVERGENT_"+key.upper())
+          r=rows[0]
+          if r["suite"]!="CG-WESO-v1" or r["iterations"]!=4096: raise SystemExit("CG_WESO_PROFILE_MISMATCH")
+          print("TEP_POH_CG_WESO_MULTIHOST_4OF4_OK suite=%s iterations=%d challenge=%s output_sha3=%s proof_sha3=%s verified_hosts=4"%(r["suite"],r["iterations"],r["challenge"],r["output_sha3"],r["proof_sha3"]))
+          PY
