@@ -1,0 +1,45 @@
+name: TEP v0.9.0 mainnet RC final CI
+on:
+  workflow_dispatch:
+  push:
+    branches: [testnet/v0.4.0-remote-deploy]
+    paths: [.github/workflows/v090-mainnet-rc-ci.yml]
+  pull_request:
+    branches: [main]
+permissions: {contents: read}
+jobs:
+  unit-conformance:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install -r requirements-rc1.txt
+      - name: Full Python test suite
+        run: |
+          set -euo pipefail
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          echo "CI_UNIT_CONFORMANCE_OK sha=$GITHUB_SHA"
+  static-integrity:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Compile all Python sources
+        run: |
+          python -m compileall -q src tools
+          echo "CI_STATIC_INTEGRITY_OK sha=$GITHUB_SHA"
+      - name: No production path crossover in testnet deployment
+        run: |
+          set -euo pipefail
+          ! grep -R -E '/var/lib/hashburst([^ -]|$)|/opt/hashburst([^ -]|$)' deploy/v040-testnet tools/testnet_peer_v040.py
+          echo "CI_PRODUCTION_ISOLATION_OK"
+  certify:
+    needs: [unit-conformance, static-integrity]
+    runs-on: ubuntu-22.04
+    steps:
+      - run: echo "CI_V090_MAINNET_RC_OK unit_conformance=1 static_integrity=1 production_isolation=1"
