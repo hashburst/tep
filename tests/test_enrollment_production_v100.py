@@ -57,4 +57,4 @@ class EnrollmentProductionTests(unittest.TestCase):
             with self.assertRaises(Exception):c.issue(self.node_id,pk,"node",100,200,q,b"0"*64)
             sig=self.node.sign(challenge_message(self.network,self.node_id,q))
             with self.assertRaises(ValueError):c.issue(self.node_id,pk,"validator",100,200,q,sig)
-\nif __name__=="__main__":unittest.main()
+if __name__=="__main__":unittest.main()
