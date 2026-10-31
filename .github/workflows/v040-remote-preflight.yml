@@ -106,8 +106,15 @@ jobs:
           grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' "$GITHUB_WORKSPACE/deploy/v040-testnet/PROVENANCE"
           python3 -c 'import cryptography; from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey; assert Ed25519PrivateKey.generate(); print("cryptography=" + cryptography.__version__)'
           python3 -m venv --help >/dev/null
-          test ! -e /etc/systemd/system/hashburst-tep-testnet.service
-          test ! -e /opt/hashburst-tep-testnet/tools/testnet_peer_v040.py
+          test -f /etc/systemd/system/hashburst-tep-testnet.service
+          test -f /opt/hashburst-tep-testnet/tools/testnet_peer_v040.py
+          systemctl is-active --quiet hashburst-tep-testnet.service
+          python3 -m py_compile /opt/hashburst-tep-testnet/tools/testnet_peer_v040.py
+          test -r /opt/hashburst-tep-testnet/PROVENANCE
+          test -r /opt/hashburst-tep-testnet/DEPLOYMENT_REVISION
+          grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' /opt/hashburst-tep-testnet/PROVENANCE
+          grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' /opt/hashburst-tep-testnet/PROVENANCE
+          echo "DEPLOYED_PAYLOAD_PRESENT_AND_ACTIVE_OK"
           echo "DEPLOYMENT_PREREQUISITES_OK"
           allowed="$(sudo -n -l)"
           grep -Fq "(root) NOPASSWD: /usr/local/sbin/hashburst-testnet-admin install-payload /opt/actions-runner/actions-runner/_work/tep/tep" <<<"$allowed"
