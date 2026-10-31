@@ -16,6 +16,7 @@ VALIDATOR_SET_DOMAIN=b"HB-TEP-VALIDATOR-SET-v1\x00"
 CHECKPOINT_DOMAIN=b"HB-TEP-CHECKPOINT-v1\x00"
 ENROLLMENT_CHALLENGE_DOMAIN=b"HB-TEP-ENROLLMENT-CHALLENGE-v1\x00"
 VALIDATOR_GOVERNANCE_VOTE_DOMAIN=b"HB-TEP-VALIDATOR-GOVERNANCE-VOTE-v1\x00"
+ANTI_EQUIVOCATION_LOCK_DOMAIN=b"HB-TEP-ANTI-EQUIVOCATION-LOCK-v1\x00"
 
 def _cbor(v):
  if isinstance(v,int):
@@ -75,6 +76,23 @@ def _append(state,index,previous,payload):
   f.write(json.dumps(row,separators=(",",":"))+"\n");f.flush();os.fsync(f.fileno())
  return row
 
+def _vote_lock_path(state): return Path(state)/"anti-equivocation-vote-lock.json"
+def _vote_lock_key(federation_id,set_version,count,validator_id):
+ return sha3_256(ANTI_EQUIVOCATION_LOCK_DOMAIN+_cbor([1,federation_id,set_version,count,validator_id])).hexdigest()
+def _authorize_vote_lock(state,federation_id,set_version,count,validator_id,proposal_digest):
+ p=_vote_lock_path(state);locks={}
+ if p.exists():
+  raw=json.loads(p.read_text());
+  if raw.get("schema")!="hb-vote-lock-v1":raise ValueError("invalid vote-lock schema")
+  locks=dict(raw.get("locks",{}))
+ key=_vote_lock_key(federation_id,set_version,count,validator_id);ph=proposal_digest.hex();prior=locks.get(key)
+ if prior is not None:
+  if prior==ph:return "IDEMPOTENT"
+  raise ValueError("equivocation rejected")
+ locks[key]=ph;tmp=p.with_suffix(".tmp")
+ with tmp.open("w") as h:json.dump({"schema":"hb-vote-lock-v1","locks":dict(sorted(locks.items()))},h,sort_keys=True,separators=(",",":"));h.flush();os.fsync(h.fileno())
+ os.replace(tmp,p);return "LOCKED"
+
 def main():
  ap=argparse.ArgumentParser();ap.add_argument("--listen",default="127.0.0.1");ap.add_argument("--port",type=int,default=47840);ap.add_argument("--state",required=True);a=ap.parse_args()
  sk,pk,nid=_load_or_create(a.state)
@@ -112,10 +130,11 @@ def main():
     except Exception:return self._send({"error":"invalid enrollment challenge"},400)
    if self.path=="/governance/vote":
     try:
-     set_version=int(o["validator_set_version"]);set_digest=bytes.fromhex(o["validator_set_digest"]);proposal_digest=bytes.fromhex(o["proposal_digest"])
-     if set_version<0 or len(set_digest)!=32 or len(proposal_digest)!=32:raise ValueError()
+     federation_id=bytes.fromhex(o["federation_id"]);set_version=int(o["validator_set_version"]);count=int(o["count"]);set_digest=bytes.fromhex(o["validator_set_digest"]);proposal_digest=bytes.fromhex(o["proposal_digest"])
+     if set_version<0 or count<0 or len(federation_id)!=32 or len(set_digest)!=32 or len(proposal_digest)!=32:raise ValueError()
+     lock_status=_authorize_vote_lock(a.state,federation_id,set_version,count,nid,proposal_digest)
      msg=VALIDATOR_GOVERNANCE_VOTE_DOMAIN+_cbor([1,set_version,set_digest,proposal_digest])
-     return self._send({"node_id":nid.hex(),"validator_id":nid.hex(),"public_key":pk.hex(),"signature":sk.sign(msg).hex()})
+     return self._send({"node_id":nid.hex(),"validator_id":nid.hex(),"public_key":pk.hex(),"signature":sk.sign(msg).hex(),"lock_status":lock_status})
     except Exception:return self._send({"error":"invalid governance vote request"},400)
    if self.path=="/finality/vote":
     try:
