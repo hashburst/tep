@@ -109,7 +109,13 @@ jobs:
           test -f /etc/systemd/system/hashburst-tep-testnet.service
           test -f /opt/hashburst-tep-testnet/tools/testnet_peer_v040.py
           systemctl is-active --quiet hashburst-tep-testnet.service
-          python3 -m py_compile /opt/hashburst-tep-testnet/tools/testnet_peer_v040.py
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          peer = Path("/opt/hashburst-tep-testnet/tools/testnet_peer_v040.py")
+          ast.parse(peer.read_text(encoding="utf-8"), filename=str(peer))
+          print("DEPLOYED_PEER_SYNTAX_READONLY_OK")
+          PY
           test -r /opt/hashburst-tep-testnet/PROVENANCE
           test -r /opt/hashburst-tep-testnet/DEPLOYMENT_REVISION
           grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' /opt/hashburst-tep-testnet/PROVENANCE
