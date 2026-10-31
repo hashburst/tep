@@ -58,7 +58,8 @@ jobs:
         env: {PYTHONPATH: src}
         run: |
           set -euo pipefail
-          python3 -m py_compile tools/testnet_peer_v040.py tools/g6_dr_probe.py\n          sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
+          python3 -m py_compile tools/testnet_peer_v040.py tools/g6_dr_probe.py
+          sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
           sudo -n /usr/local/sbin/hashburst-testnet-admin restart
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:47840/health > before.json 2>/dev/null && break; sleep 1; done
           python3 tools/g6_dr_probe.py
