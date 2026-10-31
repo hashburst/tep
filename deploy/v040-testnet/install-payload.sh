@@ -45,9 +45,14 @@ if [ -e "$DEST/tools/testnet_peer_v040.py" ]; then
   done
   grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' "$DEST/deploy/v040-testnet/PROVENANCE"
   grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' "$DEST/deploy/v040-testnet/PROVENANCE"
+  install -m 0644 "$SRC/tools/testnet_peer_v040.py" "$DEST/tools/testnet_peer_v040.py"
+  install -m 0644 "$SRC/tools/testnet_multihost_probe_v040.py" "$DEST/tools/testnet_multihost_probe_v040.py"
+  install -m 0644 "$SRC/deploy/systemd/hashburst-tep-testnet.service" "$DEST/deploy/systemd/hashburst-tep-testnet.service"
+  install -m 0644 "$SRC/deploy/v040-testnet/PROVENANCE" "$DEST/deploy/v040-testnet/PROVENANCE"
+  printf '%s\n' "${DEPLOYMENT_REVISION:-unknown}" > "$DEST/deploy/v040-testnet/DEPLOYMENT_REVISION"
   install -m 0644 "$DEST/deploy/systemd/hashburst-tep-testnet.service" /etc/systemd/system/hashburst-tep-testnet.service
   systemctl daemon-reload
-  echo "PAYLOAD_ALREADY_VALID"
+  echo "PAYLOAD_UPDATED_OK"
   exit 0
 fi
 
