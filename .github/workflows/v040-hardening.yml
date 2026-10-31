@@ -30,9 +30,9 @@ jobs:
           for p in NoNewPrivileges=yes PrivateTmp=yes ProtectSystem=strict ProtectHome=yes; do
             k="${p%%=*}"; v="${p#*=}"; test "$(systemctl show hashburst-tep-testnet -p "$k" --value)" = "$v"
           done
-          test "$(stat -c '%U:%G:%a' /var/lib/hashburst-testnet/testnet-ed25519.key)" = "hashburst-testnet:hashburst-testnet:600"
-          if cat /var/lib/hashburst-testnet/testnet-ed25519.key >/dev/null 2>&1; then echo PRIVATE_KEY_READABLE_BY_RUNNER; exit 40; fi
-          echo "HARDENING_SYSTEMD_KEY_BOUNDARY_OK"
+          if stat /var/lib/hashburst-testnet/testnet-ed25519.key >/dev/null 2>&1; then echo PRIVATE_KEY_METADATA_VISIBLE_BY_RUNNER; exit 40; fi
+          if cat /var/lib/hashburst-testnet/testnet-ed25519.key >/dev/null 2>&1; then echo PRIVATE_KEY_READABLE_BY_RUNNER; exit 41; fi
+          echo "HARDENING_SYSTEMD_KEY_BOUNDARY_OK state_dir=700 key_inaccessible_to_runner=1"
       - name: Malformed and quorum-negative API tests
         run: |
           set -euo pipefail
