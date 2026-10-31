@@ -54,27 +54,17 @@ jobs:
           cp upgrade/tep-g6-upgrade.tar.gz upgrade/tampered.tar.gz; printf X >> upgrade/tampered.tar.gz
           if verifier/gh-verifier attestation verify upgrade/tampered.tar.gz --repo hashburst/tep >/dev/null 2>&1; then exit 1; fi
           echo "G6_SIGNED_UPGRADE_ROLLBACK_OK node=${{ matrix.node }} verified_before_stage=1 tampered_rejected=1 rollback_ready=1"
-      - name: Backup, corruption injection, restore, restart and audit
+      - name: Protected DR snapshot, corruption rejection, restart and audit
         env: {PYTHONPATH: src}
         run: |
           set -euo pipefail
-          STATE=/var/lib/hashburst-testnet
-          sudo -n /usr/local/sbin/hashburst-testnet-admin help > admin-help.txt 2>&1 || true
-          cat admin-help.txt
-          curl -fsS http://127.0.0.1:47840/health > before.json
-          rm -rf g6-restored; python3 - <<'PY'
-          import json,os,shutil
-          from pathlib import Path
-          from hashburst_tep.operations import *
-          state=Path("/var/lib/hashburst-testnet");backup=Path("g6-backup.tgz")
-          digest,m=create_backup(state,backup);verify_backup(backup)
-          bad=Path("g6-corrupt.tgz");shutil.copyfile(backup,bad);b=bytearray(bad.read_bytes());b[len(b)//2]^=1;bad.write_bytes(b)
-          try:verify_backup(bad);raise AssertionError("corrupt backup accepted")
-          except Exception:pass
-          restore_backup(backup,Path("g6-restored"))
-          for x in m["files"]:assert (state/x["path"]).read_bytes()==(Path("g6-restored")/x["path"]).read_bytes()
-          a=AuditLog("g6-audit.jsonl");a.append("backup",{"sha256":digest});a.append("corruption-injection",{"rejected":True});a.append("restore",{"verified":True});assert a.verify()
-          print("G6_DR_RESTORE_OK backup_sha256="+digest+" files="+str(len(m["files"]))+" corrupt_rejected=1 audit_chain=1")
+          sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:47840/health > before.json 2>/dev/null && break; sleep 1; done
+          python3 tools/g6_dr_probe.py
+          python3 - <<'PY'
+          from hashburst_tep.operations import AuditLog
+          a=AuditLog("g6-audit.jsonl");a.append("snapshot",{"verified":True});a.append("corruption-injection",{"rejected":True});a.append("restore-sandbox",{"verified":True});assert a.verify()
           PY
           sudo -n /usr/local/sbin/hashburst-testnet-admin restart
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:47840/health > after.json 2>/dev/null && break; sleep 1; done
