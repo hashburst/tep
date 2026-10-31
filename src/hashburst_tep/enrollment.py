@@ -75,3 +75,70 @@ class EnrollmentRegistry:
     def revoke(self,certificate_id):
         _b32("certificate_id",certificate_id);self._revoked.add(certificate_id)
     def is_revoked(self,certificate_id):return certificate_id in self._revoked
+
+
+class PersistentEnrollmentRegistry:
+    """Crash-safe JSON registry for consumed challenges, certificates and revocations."""
+    def __init__(self,path):
+        import json,os
+        self.path=os.fspath(path);self._json=json
+        self._state={"next_serial":1,"used_challenges":[],"certificates":{},"revoked":[]}
+        if os.path.exists(self.path):
+            with open(self.path,"r",encoding="utf-8") as h:self._state=json.load(h)
+    def _save(self):
+        import os,tempfile
+        directory=os.path.dirname(self.path) or ".";os.makedirs(directory,exist_ok=True)
+        fd,tmp=tempfile.mkstemp(prefix=".enrollment-",dir=directory,text=True)
+        try:
+            with os.fdopen(fd,"w",encoding="utf-8") as h:
+                self._json.dump(self._state,h,sort_keys=True,separators=(",",":"));h.flush();os.fsync(h.fileno())
+            os.replace(tmp,self.path)
+            dfd=os.open(directory,os.O_RDONLY)
+            try:os.fsync(dfd)
+            finally:os.close(dfd)
+        finally:
+            if os.path.exists(tmp):os.unlink(tmp)
+    def consume_challenge(self,challenge):
+        _b32("challenge",challenge);hx=challenge.hex()
+        if hx in self._state["used_challenges"]:raise ValueError("challenge replay")
+        self._state["used_challenges"].append(hx);self._save()
+    def allocate_serial(self):
+        serial=self._state["next_serial"];_u64("serial",serial)
+        self._state["next_serial"]=serial+1;self._save();return serial
+    def register(self,cert):
+        key=str(cert.serial)
+        if key in self._state["certificates"]:raise ValueError("duplicate enrollment serial")
+        cid=cert.certificate_id();self._state["certificates"][key]=cid.hex();self._save();return cid
+    def revoke(self,certificate_id):
+        _b32("certificate_id",certificate_id);hx=certificate_id.hex()
+        if hx not in self._state["revoked"]:self._state["revoked"].append(hx);self._save()
+    def is_revoked(self,certificate_id):return certificate_id.hex() in self._state["revoked"]
+
+class EnrollmentController:
+    """Persistent controller identity and certificate issuer; never grants validator scope."""
+    def __init__(self,state_dir,network_id):
+        import os
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+        from cryptography.hazmat.primitives.serialization import Encoding,PrivateFormat,PublicFormat,NoEncryption
+        _b32("network_id",network_id);self.network_id=network_id;os.makedirs(state_dir,exist_ok=True)
+        self._key_path=os.path.join(state_dir,"enrollment-controller-ed25519.key")
+        if os.path.exists(self._key_path):
+            raw=open(self._key_path,"rb").read()
+            if len(raw)!=32:raise ValueError("invalid controller private key")
+            self.private_key=Ed25519PrivateKey.from_private_bytes(raw)
+        else:
+            self.private_key=Ed25519PrivateKey.generate()
+            raw=self.private_key.private_bytes(Encoding.Raw,PrivateFormat.Raw,NoEncryption())
+            fd=os.open(self._key_path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+            with os.fdopen(fd,"wb") as h:h.write(raw);h.flush();os.fsync(h.fileno())
+        self.public_key_bytes=self.private_key.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw)
+        self.controller_id=sha3_256(b"HB-TEP-ENROLLMENT-CONTROLLER-v1\\x00"+self.public_key_bytes).digest()
+        self.registry=PersistentEnrollmentRegistry(os.path.join(state_dir,"enrollment-registry.json"))
+    def issue(self,node_id,node_public_key,scope,not_before,not_after,challenge,challenge_signature):
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        _b32("node_id",node_id);_b32("node_public_key",node_public_key);_b32("challenge",challenge)
+        Ed25519PublicKey.from_public_bytes(node_public_key).verify(challenge_signature,challenge_message(self.network_id,node_id,challenge))
+        self.registry.consume_challenge(challenge)
+        serial=self.registry.allocate_serial()
+        cert=EnrollmentCertificate(1,serial,self.network_id,node_id,node_public_key,scope,not_before,not_after,self.controller_id)
+        cert=sign_certificate(cert,self.private_key);self.registry.register(cert);return cert
