@@ -108,6 +108,25 @@ def main():
      msg=_finality_message(version,vsd,net,count,bid)
      return self._send({"node_id":nid.hex(),"public_key":pk.hex(),"validator_id":nid.hex(),"signature":sk.sign(msg).hex()})
     except Exception:return self._send({"error":"invalid finality vote request"},400)
+   if self.path=="/finality/catchup":
+    try:
+     version=int(o["validator_set_version"]);net=bytes.fromhex(o["network_id"]);count=int(o["count"]);bid=bytes.fromhex(o["block_id"]);h=bytes.fromhex(o["h"]);vph=bytes.fromhex(o["vdf_params_hash"])
+     validators=[(bytes.fromhex(x["validator_id"]),bytes.fromhex(x["public_key"])) for x in o["validators"]]
+     votes=[(bytes.fromhex(x["validator_id"]),bytes.fromhex(x["signature"])) for x in o["votes"]]
+     if len(validators)!=4 or len({i for i,k in validators})!=4 or len({k for i,k in validators})!=4:raise ValueError("invalid validator set")
+     vsd=_vs_digest(version,validators);msg=_finality_message(version,vsd,net,count,bid);members=dict(validators);seen=set()
+     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+     for vid,sig in votes:
+      if vid in seen or vid not in members:raise ValueError("invalid vote")
+      seen.add(vid);Ed25519PublicKey.from_public_bytes(members[vid]).verify(sig,msg)
+     threshold=(2*len(validators))//3+1
+     if len(seen)<threshold:raise ValueError("insufficient quorum")
+     qcd=_qc_digest(version,vsd,net,count,bid,votes);payload=_checkpoint_bytes(net,count,h,bid,vph,version,qcd);cid=_persist_checkpoint(a.state,payload)
+     expected=o.get("checkpoint_id")
+     if expected and cid.hex()!=expected:raise ValueError("checkpoint mismatch")
+     return self._send({"node_id":nid.hex(),"checkpoint_id":cid.hex(),"qc_digest":qcd.hex(),"votes":len(seen),"threshold":threshold,"caught_up":True})
+    except ValueError as e:return self._send({"error":str(e)},409)
+    except Exception:return self._send({"error":"invalid finality catchup"},400)
    if self.path=="/finality/commit":
     try:
      version=int(o["validator_set_version"]);net=bytes.fromhex(o["network_id"]);count=int(o["count"]);bid=bytes.fromhex(o["block_id"]);h=bytes.fromhex(o["h"]);vph=bytes.fromhex(o["vdf_params_hash"])
