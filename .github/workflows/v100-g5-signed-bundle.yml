@@ -1,0 +1,84 @@
+name: TEP v1.0 G5 signed reproducible supply chain
+on:
+  push:
+    branches: [mainnet/v1.0.0-g1-enrollment]
+    paths: [src/**, tools/**, deploy/**, requirements-rc1.txt, .github/workflows/v100-g5-signed-bundle.yml]
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Deterministic build twice, SBOM and provenance
+        run: |
+          set -euo pipefail
+          build() {
+            out="$1"; rm -rf "$out"; mkdir -p "$out/root"
+            git ls-files -z src tools deploy requirements-rc1.txt | while IFS= read -r -d '' f; do mkdir -p "$out/root/$(dirname "$f")"; cp "$f" "$out/root/$f"; done
+            find "$out/root" -exec touch -h -d '@0' {} +
+            tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -C "$out/root" -czf "$out/tep-v1.0.0-mainnet.tar.gz" .
+          }
+          build b1; build b2
+          test "$(sha256sum b1/tep-v1.0.0-mainnet.tar.gz|cut -d' ' -f1)" = "$(sha256sum b2/tep-v1.0.0-mainnet.tar.gz|cut -d' ' -f1)"
+          python3 - <<'PY'
+          import hashlib,json,subprocess
+          files=subprocess.check_output(["git","ls-files","src","tools","deploy","requirements-rc1.txt"],text=True).splitlines()
+          fs=[{"fileName":f,"checksums":[{"algorithm":"SHA256","checksumValue":hashlib.sha256(open(f,"rb").read()).hexdigest()}]} for f in sorted(files)]
+          json.dump({"spdxVersion":"SPDX-2.3","dataLicense":"CC0-1.0","SPDXID":"SPDXRef-DOCUMENT","name":"HashBurst-TEP-v1.0.0-mainnet","documentNamespace":"https://github.com/hashburst/tep/sbom/"+subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip(),"files":fs},open("b1/sbom.spdx.json","w"),sort_keys=True,separators=(",",":"))
+          sha=subprocess.check_output(["git","rev-parse","HEAD"],text=True).strip()
+          json.dump({"schema":"hb-tep-provenance-v1","repository":"hashburst/tep","source_commit":sha,"workflow":"v100-g5-signed-bundle.yml","builder":"github-actions-oidc"},open("b1/provenance.json","w"),sort_keys=True,separators=(",",":"))
+          PY
+          A=$(sha256sum b1/tep-v1.0.0-mainnet.tar.gz|cut -d' ' -f1); S=$(sha256sum b1/sbom.spdx.json|cut -d' ' -f1); P=$(sha256sum b1/provenance.json|cut -d' ' -f1)
+          printf '{"artifact":"tep-v1.0.0-mainnet.tar.gz","artifact_sha256":"%s","sbom_sha256":"%s","provenance_sha256":"%s","source_commit":"%s","version":"1.0.0-mainnet"}\n' "$A" "$S" "$P" "$GITHUB_SHA" > b1/release-manifest.json
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -C b1 -czf tep-v1.0.0-mainnet-bundle.tar.gz tep-v1.0.0-mainnet.tar.gz sbom.spdx.json provenance.json release-manifest.json
+          echo "REPRODUCIBLE_ARTIFACT_OK sha256=$A source_commit=$GITHUB_SHA"
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: tep-v1.0.0-mainnet-bundle.tar.gz
+      - uses: actions/attest-sbom@v3
+        with:
+          subject-path: tep-v1.0.0-mainnet-bundle.tar.gz
+          sbom-path: b1/sbom.spdx.json
+      - uses: actions/upload-artifact@v4
+        with: {name: g5-signed-bundle, path: tep-v1.0.0-mainnet-bundle.tar.gz}
+  verify:
+    needs: [build]
+    strategy:
+      fail-fast: false
+      matrix: {node: ["153","154","155","157"]}
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    permissions:
+      contents: read
+      id-token: write
+      attestations: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: g5-signed-bundle}
+      - name: Verify GitHub OIDC provenance before unpack/deploy
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          set -euo pipefail
+          gh attestation verify tep-v1.0.0-mainnet-bundle.tar.gz --repo hashburst/tep
+          mkdir verified; tar -xzf tep-v1.0.0-mainnet-bundle.tar.gz -C verified
+          python3 - <<'PY'
+          import hashlib,json
+          p="verified/";m=json.load(open(p+"release-manifest.json"))
+          def h(x):return hashlib.sha256(open(p+x,"rb").read()).hexdigest()
+          assert h(m["artifact"])==m["artifact_sha256"];assert h("sbom.spdx.json")==m["sbom_sha256"];assert h("provenance.json")==m["provenance_sha256"]
+          pr=json.load(open(p+"provenance.json"));assert pr["source_commit"]==m["source_commit"]
+          print("SUPPLY_CHAIN_SIGNED_DEPLOY_VERIFY_OK source_commit="+m["source_commit"]+" artifact_sha256="+m["artifact_sha256"])
+          PY
+          cp tep-v1.0.0-mainnet-bundle.tar.gz tampered.tar.gz; printf X >> tampered.tar.gz
+          if gh attestation verify tampered.tar.gz --repo hashburst/tep >/dev/null 2>&1; then echo "tampered artifact accepted"; exit 1; fi
+          cp tep-v1.0.0-mainnet-bundle.tar.gz unsigned.tar.gz
+          if gh attestation verify unsigned.tar.gz --repo hashburst/not-the-trusted-repo >/dev/null 2>&1; then echo "wrong trust identity accepted"; exit 1; fi
+          echo "SUPPLY_CHAIN_NEGATIVE_OK tampered_rejected=1 wrong_identity_rejected=1"
+  certify:
+    needs: [verify]
+    runs-on: ubuntu-22.04
+    steps:
+      - run: echo "SUPPLY_CHAIN_SIGNING_PRODUCTION_4OF4_OK reproducible=1 sha256_manifest=1 sbom=1 provenance=1 oidc_signature=1 verify_before_deploy=1 tampered_rejected=1 wrong_identity_rejected=1"
