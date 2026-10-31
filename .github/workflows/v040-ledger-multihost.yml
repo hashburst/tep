@@ -61,14 +61,13 @@ jobs:
         with:
           pattern: ledger-ack-*
           path: acks
-          merge-multiple: true
       - name: Verify four distinct signed-peer results converge
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           import glob,json
-          fs=glob.glob("acks/*.json")
+          fs=glob.glob("acks/**/ledger-ack.json",recursive=True)
           if len(fs)!=4: raise SystemExit("ACK_COUNT_NOT_4 "+repr(fs))
           rows=[json.load(open(f)) for f in fs]
           if len({r["node_id"] for r in rows})!=4: raise SystemExit("ACK_IDENTITIES_NOT_DISTINCT")
