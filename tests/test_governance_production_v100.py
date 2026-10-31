@@ -14,7 +14,8 @@ class GovernanceProductionTests(unittest.TestCase):
   self.fid=b"F"*32
   self.state=GovernanceState(self.fid,1,tuple(GovernanceMember(self.ids[i],self.pks[i],ACTIVE if i<4 else ENROLLED) for i in range(5)))
  def votes(self,p,s,count):
-  msg=p.vote_message(s);return tuple(GovernanceVote(self.ids[i],self.keys[i].sign(msg)) for i in range(count))
+  msg=p.vote_message(s);keys={self.ids[i]:self.keys[i] for i in range(5)}
+  return tuple(GovernanceVote(v.validator_id,keys[v.validator_id].sign(msg)) for v in s.ordered()[:count])
  def proposal(self,state,index,to_state,new_key=None):
   m={x.validator_id:x for x in state.ordered()}[self.ids[index]]
   return GovernanceProposal(self.fid,state.version,m.validator_id,m.public_key,new_key or m.public_key,m.state,to_state,bytes([state.version])*32)
