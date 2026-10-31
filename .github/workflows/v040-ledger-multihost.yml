@@ -23,7 +23,7 @@ jobs:
           import json,urllib.request
           from hashlib import sha3_256
           from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-          urls=["http://77.90.188.153:47840","http://77.90.188.154:47840","http://77.90.188.155:47840","http://77.90.188.157:47840"]
+          peers=[("153","http://127.0.0.1:47840"),("154","http://77.90.188.154:47840"),("155","http://77.90.188.155:47840"),("157","http://77.90.188.157:47840")]\n          urls=[u for _,u in peers]
           D=b"HB-TEP-TESTNET-LEDGER-v1\x00"; A=b"HB-TEP-TESTNET-LEDGER-ACK-v1\x00"
           heads=[]
           for u in urls:
