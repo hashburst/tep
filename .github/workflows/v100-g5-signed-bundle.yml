@@ -78,6 +78,7 @@ jobs:
         run: |
           set -euo pipefail
           (cd verifier && sha256sum -c gh-verifier.sha256)
+          chmod 755 verifier/gh-verifier
           verifier/gh-verifier attestation verify tep-v1.0.0-mainnet-bundle.tar.gz --repo hashburst/tep
           mkdir verified; tar -xzf tep-v1.0.0-mainnet-bundle.tar.gz -C verified
           python3 - <<'PY'
