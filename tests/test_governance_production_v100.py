@@ -22,7 +22,7 @@ class GovernanceProductionTests(unittest.TestCase):
  def test_two_of_four_rejected_three_of_four_accepted(self):
   s=self.state.active_validator_set();p=self.proposal(self.state,4,CANDIDATE)
   with self.assertRaises(ValueError):apply_governance(self.state,p,self.votes(p,s,2),s)
-  n=apply_governance(self.state,p,self.votes(p,s,3),s);self.assertEqual({x.validator_id:x.state for x in n.members}[self.ids[4]],CANDIDATE)
+  n=apply_governance(self.state,p,self.votes(p,s,s.threshold()),s);self.assertEqual({x.validator_id:x.state for x in n.members}[self.ids[4]],CANDIDATE)
  def test_full_lifecycle(self):
   state=self.state
   for target in (CANDIDATE,PENDING_ACTIVATION,ACTIVE,SUSPENDED):
