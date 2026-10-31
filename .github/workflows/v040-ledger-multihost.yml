@@ -10,58 +10,75 @@ concurrency:
   group: tep-v040-ledger-multihost
   cancel-in-progress: false
 jobs:
-  ledger-convergence:
+  local-ledger-153:
     runs-on: [self-hosted, tep-testnet-153]
-    steps:
+    steps: &ledger_steps
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
-      - name: Append one deterministic entry on all four peers and verify signed convergence
+      - name: Append deterministic entry locally and verify signed ACK
         shell: bash
         run: |
           set -euo pipefail
+          NODE="${{ runner.name }}"
           python3 - <<'PY'
           import json,urllib.request
           from hashlib import sha3_256
           from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-          peers=[("153","http://127.0.0.1:47840"),("154","http://77.90.188.154:47840"),("155","http://77.90.188.155:47840"),("157","http://77.90.188.157:47840")]
-          urls=[u for _,u in peers]
-          D=b"HB-TEP-TESTNET-LEDGER-v1\x00"; A=b"HB-TEP-TESTNET-LEDGER-ACK-v1\x00"
-          heads=[]
-          for name,u in peers:
-            try:
-              with urllib.request.urlopen(u+"/ledger/head",timeout=10) as r: h=json.load(r)
-              heads.append(h)
-              print("PRE_HEAD_OK node=%s height=%s node_id=%s"%(name,h["height"],h["node_id"]),flush=True)
-            except Exception as e:
-              raise SystemExit("PRE_HEAD_UNREACHABLE node=%s error=%r"%(name,e))
-          heights={h["height"] for h in heads}
-          if len(heights)!=1: raise SystemExit("PRECONDITION_DIVERGENT_HEIGHTS "+repr(sorted(heights)))
-          height=heights.pop(); index=height+1
-          prev=bytes.fromhex(heads[0]["head"]["entry_id"]) if height else bytes(32)
-          if any((bytes.fromhex(h["head"]["entry_id"]) if height else bytes(32))!=prev for h in heads):
-            raise SystemExit("PRECONDITION_DIVERGENT_HEADS")
+          U="http://127.0.0.1:47840"; D=b"HB-TEP-TESTNET-LEDGER-v1\x00"; A=b"HB-TEP-TESTNET-LEDGER-ACK-v1\x00"
+          with urllib.request.urlopen(U+"/ledger/head",timeout=10) as r:h=json.load(r)
+          print("LOCAL_PRE_HEAD_OK height=%s node_id=%s"%(h["height"],h["node_id"]),flush=True)
+          height=h["height"]; index=height+1
+          prev=bytes.fromhex(h["head"]["entry_id"]) if height else bytes(32)
           payload=sha3_256(b"HB-TEP-REAL-MULTIHOST-GATE-v1\x00"+index.to_bytes(8,"big")+prev).digest()
           expected=sha3_256(D+index.to_bytes(8,"big")+prev+payload).digest()
-          acks=[]
-          for name,u in peers:
-            try:
-              body=json.dumps({"index":index,"previous_entry_id":prev.hex(),"payload":payload.hex()}).encode()
-              req=urllib.request.Request(u+"/ledger/append",data=body,headers={"Content-Type":"application/json"},method="POST")
-              with urllib.request.urlopen(req,timeout=10) as r:o=json.load(r)
-              if bytes.fromhex(o["entry"]["entry_id"])!=expected: raise RuntimeError("ENTRY_ID_MISMATCH")
-              nid=bytes.fromhex(o["node_id"]);pk=bytes.fromhex(o["public_key"]);sig=bytes.fromhex(o["signature"])
-              Ed25519PublicKey.from_public_bytes(pk).verify(sig,A+nid+expected)
-              acks.append(o["node_id"])
-              print("APPEND_ACK_OK node=%s entry_id=%s node_id=%s"%(name,expected.hex(),o["node_id"]),flush=True)
-            except Exception as e:
-              raise SystemExit("APPEND_ACK_FAILED node=%s error=%r"%(name,e))
-          if len(set(acks))!=4: raise SystemExit("ACK_IDENTITIES_NOT_DISTINCT")
-          for name,u in peers:
-            try:
-              with urllib.request.urlopen(u+"/ledger/head",timeout=10) as r:h=json.load(r)
-              if h["height"]!=index or bytes.fromhex(h["head"]["entry_id"])!=expected: raise RuntimeError("HEAD_MISMATCH")
-              print("POST_HEAD_OK node=%s height=%s entry_id=%s"%(name,h["height"],expected.hex()),flush=True)
-            except Exception as e:
-              raise SystemExit("POST_HEAD_FAILED node=%s error=%r"%(name,e))
-          print("LEDGER_MULTIHOST_4OF4_OK index=%d entry_id=%s signed_distinct_acks=4"%(index,expected.hex()))
+          body=json.dumps({"index":index,"previous_entry_id":prev.hex(),"payload":payload.hex()}).encode()
+          req=urllib.request.Request(U+"/ledger/append",data=body,headers={"Content-Type":"application/json"},method="POST")
+          with urllib.request.urlopen(req,timeout=10) as r:o=json.load(r)
+          assert bytes.fromhex(o["entry"]["entry_id"])==expected
+          nid=bytes.fromhex(o["node_id"]); pk=bytes.fromhex(o["public_key"]); sig=bytes.fromhex(o["signature"])
+          Ed25519PublicKey.from_public_bytes(pk).verify(sig,A+nid+expected)
+          with urllib.request.urlopen(U+"/ledger/head",timeout=10) as r:post=json.load(r)
+          assert post["height"]==index and bytes.fromhex(post["head"]["entry_id"])==expected
+          ack={"index":index,"previous_entry_id":prev.hex(),"entry_id":expected.hex(),"node_id":o["node_id"],"public_key":o["public_key"],"signature":o["signature"]}
+          open("ledger-ack.json","w").write(json.dumps(ack,sort_keys=True))
+          print("LOCAL_APPEND_ACK_OK index=%d entry_id=%s node_id=%s"%(index,expected.hex(),o["node_id"]),flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ledger-ack-${{ runner.name }}
+          path: ledger-ack.json
+          if-no-files-found: error
+  local-ledger-154:
+    runs-on: [self-hosted, tep-testnet-154]
+    steps: *ledger_steps
+  local-ledger-155:
+    runs-on: [self-hosted, tep-testnet-155]
+    steps: *ledger_steps
+  local-ledger-157:
+    runs-on: [self-hosted, tep-testnet-157]
+    steps: *ledger_steps
+  verify-four-host-convergence:
+    needs: [local-ledger-153, local-ledger-154, local-ledger-155, local-ledger-157]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ledger-ack-*
+          path: acks
+          merge-multiple: true
+      - name: Verify four distinct signed-peer results converge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob,json
+          fs=glob.glob("acks/*.json")
+          if len(fs)!=4: raise SystemExit("ACK_COUNT_NOT_4 "+repr(fs))
+          rows=[json.load(open(f)) for f in fs]
+          if len({r["node_id"] for r in rows})!=4: raise SystemExit("ACK_IDENTITIES_NOT_DISTINCT")
+          if len({r["index"] for r in rows})!=1: raise SystemExit("DIVERGENT_INDEX")
+          if len({r["previous_entry_id"] for r in rows})!=1: raise SystemExit("DIVERGENT_PREVIOUS")
+          if len({r["entry_id"] for r in rows})!=1: raise SystemExit("DIVERGENT_ENTRY_ID")
+          r=rows[0]
+          print("LEDGER_MULTIHOST_4OF4_OK index=%d entry_id=%s signed_distinct_acks=4"%(r["index"],r["entry_id"]))
           PY
