@@ -52,8 +52,9 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf .cg-weso-deps
-          PY="$GITHUB_WORKSPACE/.python312/python/bin/python3"\n          "$PY" -m pip install --disable-pip-version-check --no-input --target "$GITHUB_WORKSPACE/.cg-weso-deps" -r requirements-rc1.txt
-          PYTHONPATH="$GITHUB_WORKSPACE/.cg-weso-deps" python - <<'PY'
+          PY="$GITHUB_WORKSPACE/.python312/python/bin/python3"
+          "$PY" -m pip install --disable-pip-version-check --no-input --target "$GITHUB_WORKSPACE/.cg-weso-deps" -r requirements-rc1.txt
+          PYTHONPATH="$GITHUB_WORKSPACE/.cg-weso-deps" "$PY" - <<'PY'
           from importlib.metadata import version
           import chiavdf,cryptography
           assert version("chiavdf") == "1.2.1", version("chiavdf")
