@@ -70,4 +70,4 @@ class AuditLog:
             prev=h;seq+=1
         return True
 
-# G6 operations protocol revision: 4
+# G6 operations protocol revision: 5
