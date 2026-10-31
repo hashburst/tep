@@ -36,7 +36,7 @@ jobs:
           printf '{"artifact":"tep-v1.0.0-mainnet.tar.gz","artifact_sha256":"%s","sbom_sha256":"%s","provenance_sha256":"%s","source_commit":"%s","version":"1.0.0-mainnet"}\n' "$A" "$S" "$P" "$GITHUB_SHA" > b1/release-manifest.json
           tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -C b1 -czf tep-v1.0.0-mainnet-bundle.tar.gz tep-v1.0.0-mainnet.tar.gz sbom.spdx.json provenance.json release-manifest.json
           echo "REPRODUCIBLE_ARTIFACT_OK sha256=$A source_commit=$GITHUB_SHA"
-      - uses: actions/attest-build-provenance@v3
+      - name: Package hosted GitHub attestation verifier\n        run: |\n          set -euo pipefail\n          command -v gh\n          cp "$(command -v gh)" gh-verifier\n          chmod 755 gh-verifier\n          sha256sum gh-verifier > gh-verifier.sha256\n      - uses: actions/upload-artifact@v4\n        with: {name: g5-gh-verifier, path: "gh-verifier\\ngh-verifier.sha256"}\n      - uses: actions/attest-build-provenance@v3
         with:
           subject-path: tep-v1.0.0-mainnet-bundle.tar.gz
       - uses: actions/attest-sbom@v3
@@ -62,7 +62,7 @@ jobs:
         env: {GH_TOKEN: "${{ github.token }}"}
         run: |
           set -euo pipefail
-          gh attestation verify tep-v1.0.0-mainnet-bundle.tar.gz --repo hashburst/tep
+          (cd verifier && sha256sum -c gh-verifier.sha256)\n          verifier/gh-verifier attestation verify tep-v1.0.0-mainnet-bundle.tar.gz --repo hashburst/tep
           mkdir verified; tar -xzf tep-v1.0.0-mainnet-bundle.tar.gz -C verified
           python3 - <<'PY'
           import hashlib,json
@@ -73,9 +73,9 @@ jobs:
           print("SUPPLY_CHAIN_SIGNED_DEPLOY_VERIFY_OK source_commit="+m["source_commit"]+" artifact_sha256="+m["artifact_sha256"])
           PY
           cp tep-v1.0.0-mainnet-bundle.tar.gz tampered.tar.gz; printf X >> tampered.tar.gz
-          if gh attestation verify tampered.tar.gz --repo hashburst/tep >/dev/null 2>&1; then echo "tampered artifact accepted"; exit 1; fi
+          if verifier/gh-verifier attestation verify tampered.tar.gz --repo hashburst/tep >/dev/null 2>&1; then echo "tampered artifact accepted"; exit 1; fi
           cp tep-v1.0.0-mainnet-bundle.tar.gz unsigned.tar.gz
-          if gh attestation verify unsigned.tar.gz --repo hashburst/not-the-trusted-repo >/dev/null 2>&1; then echo "wrong trust identity accepted"; exit 1; fi
+          if verifier/gh-verifier attestation verify unsigned.tar.gz --repo hashburst/not-the-trusted-repo >/dev/null 2>&1; then echo "wrong trust identity accepted"; exit 1; fi
           echo "SUPPLY_CHAIN_NEGATIVE_OK tampered_rejected=1 wrong_identity_rejected=1"
   certify:
     needs: [verify]
