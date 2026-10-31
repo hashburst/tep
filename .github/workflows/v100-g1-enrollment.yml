@@ -18,6 +18,8 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install -r requirements-rc1.txt
       - name: Enrollment production tests
+        env:
+          PYTHONPATH: src
         run: |
           set -euo pipefail
           python -m unittest tests.test_enrollment_production_v100 -v
