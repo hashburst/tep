@@ -48,7 +48,7 @@ jobs:
            with urllib.request.urlopen("http://"+ip+":47840/health",timeout=5) as r:hs.append(json.load(r))
           pubs={x["node_id"]:x["public_key"] for x in hs}
           # public key of isolated validator is stable and obtained from the certified Federation validator set
-          pubs["ae434ca6d25281f36519364cedce0817fe5882936f4570f831880e708137bfa2"]="c5b305ec1d052c65a8dfb05ad0fe33f8ec74918e070b7c9f066707d03f5d17d2"
+          pubs["ae434ca6d25281f36519364cedce0817fe5882936f4570f831880e708137bfa2"]="16269604e9f2f95907450279fa0409960bd985f83d18a38f0cf25299f499906e"
           vals=[{"validator_id":i,"public_key":pubs[i]} for i,_ in allids]
           def cbor(v):
            if isinstance(v,int):
