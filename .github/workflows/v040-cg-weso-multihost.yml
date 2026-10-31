@@ -29,12 +29,24 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Verify real CG-WESO dependency and execute deterministic PoH proof
+      - name: Provision isolated CG-WESO dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .venv-cg-weso
+          python3 -m venv .venv-cg-weso
+          .venv-cg-weso/bin/python -m pip install --disable-pip-version-check --no-input -r requirements-rc1.txt
+          .venv-cg-weso/bin/python - <<'PY'
+          import chiavdf,cryptography
+          assert getattr(chiavdf,"__version__",None) == "1.2.1", getattr(chiavdf,"__version__",None)
+          print("CG_WESO_DEPENDENCY_OK chiavdf=1.2.1 cryptography="+cryptography.__version__,flush=True)
+          PY
+      - name: Execute and verify real deterministic CG-WESO PoH proof
         shell: bash
         run: |
           set -euo pipefail
           export PYTHONPATH="$GITHUB_WORKSPACE/src"
-          python3 - <<'PY'
+          .venv-cg-weso/bin/python - <<'PY'
           import hashlib,json
           import chiavdf
           from hashburst_tep.ledger import poh_input
@@ -51,15 +63,7 @@ jobs:
           result=adapter.evaluate(challenge,4096)
           assert adapter.verify(challenge,result)
           assert len(result.output)==100 and len(result.proof)==100
-          row={
-            "suite":adapter.suite_id,
-            "iterations":result.iterations,
-            "challenge":challenge.hex(),
-            "output":result.output.hex(),
-            "proof":result.proof.hex(),
-            "output_sha3":hashlib.sha3_256(result.output).hexdigest(),
-            "proof_sha3":hashlib.sha3_256(result.proof).hexdigest(),
-          }
+          row={"suite":adapter.suite_id,"iterations":result.iterations,"challenge":challenge.hex(),"output":result.output.hex(),"proof":result.proof.hex(),"output_sha3":hashlib.sha3_256(result.output).hexdigest(),"proof_sha3":hashlib.sha3_256(result.proof).hexdigest()}
           open("cg-weso-result.json","w").write(json.dumps(row,sort_keys=True))
           print("CG_WESO_REAL_VERIFY_OK suite=%s iterations=%d challenge=%s output_sha3=%s proof_sha3=%s"%(row["suite"],row["iterations"],row["challenge"],row["output_sha3"],row["proof_sha3"]),flush=True)
           PY
