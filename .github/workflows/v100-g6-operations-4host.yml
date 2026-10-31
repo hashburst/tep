@@ -59,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           STATE=/var/lib/hashburst-testnet
-          curl -fsS http://127.0.0.1:47840/health > before.json
+          sudo -n /usr/local/sbin/hashburst-testnet-admin help > admin-help.txt 2>&1 || true\n          cat admin-help.txt\n          curl -fsS http://127.0.0.1:47840/health > before.json
           rm -rf g6-restored; python3 - <<'PY'
           import json,os,shutil
           from pathlib import Path
