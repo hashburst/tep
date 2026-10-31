@@ -136,7 +136,8 @@ def main():
   def _send(self,obj,status=200):
    b=json.dumps(obj,separators=(",",":")).encode();self.send_response(status);self.send_header("Content-Type","application/json");self.send_header("Content-Length",str(len(b)));self.end_headers();self.wfile.write(b)
   def do_GET(self):
-   if self.path=="/health":return self._send({"ok":True,"profile":"v0.4.0-testnet","node_id":nid.hex(),"public_key":pk.hex()})\n   if self.path=="/operations/snapshot":return self._send(_ops_snapshot(a.state))
+   if self.path=="/health":return self._send({"ok":True,"profile":"v0.4.0-testnet","node_id":nid.hex(),"public_key":pk.hex()})
+   if self.path=="/operations/snapshot":return self._send(_ops_snapshot(a.state))
    if self.path=="/genesis":
     p=_genesis_path(a.state)
     if not p.exists():return self._send({"node_id":nid.hex(),"bound":False})
@@ -154,7 +155,10 @@ def main():
    try:
     n=int(self.headers.get("Content-Length","0"));o=json.loads(self.rfile.read(n))
    except Exception:return self._send({"error":"invalid json"},400)
-   if self.path=="/operations/restore-sandbox":\n    try:return self._send(_ops_restore_sandbox(a.state,o))\n    except Exception as e:return self._send({"error":str(e)},409)\n   if self.path=="/genesis/bind":
+   if self.path=="/operations/restore-sandbox":
+    try:return self._send(_ops_restore_sandbox(a.state,o))
+    except Exception as e:return self._send({"error":str(e)},409)
+   if self.path=="/genesis/bind":
     try:
      net=bytes.fromhex(o["network_id"]);chain=bytes.fromhex(o["chain_id"]);gid=bytes.fromhex(o["genesis_id"]);canonical=bytes.fromhex(o["canonical_genesis"])
      if any(len(x)!=32 for x in (net,chain,gid)) or not canonical:raise ValueError()
