@@ -94,6 +94,30 @@ def _authorize_vote_lock(state,federation_id,set_version,count,validator_id,prop
  with tmp.open("w") as h:json.dump({"schema":"hb-vote-lock-v1","locks":dict(sorted(locks.items()))},h,sort_keys=True,separators=(",",":"));h.flush();os.fsync(h.fileno())
  os.replace(tmp,p);return "LOCKED"
 
+OPS_FILES=("production-genesis.json","finalized-checkpoint.bin","testnet-ledger.jsonl","anti-equivocation-vote-lock.json")
+def _ops_snapshot(state):
+ rows=[]
+ for name in OPS_FILES:
+  p=Path(state)/name
+  if p.is_file():
+   b=p.read_bytes();rows.append({"path":name,"size":len(b),"sha256":__import__("hashlib").sha256(b).hexdigest(),"content_hex":b.hex()})
+ return {"schema":"hb-tep-ops-snapshot-v1","node_id":_load_or_create(state)[2].hex(),"files":rows}
+def _ops_restore_sandbox(state,obj):
+ if obj.get("schema")!="hb-tep-ops-snapshot-v1":raise ValueError("invalid snapshot schema")
+ root=Path(state)/"dr-restore-sandbox";tmp=Path(state)/".dr-restore-sandbox.tmp"
+ if tmp.exists():__import__("shutil").rmtree(tmp)
+ tmp.mkdir()
+ seen=set()
+ for x in obj.get("files",[]):
+  name=x["path"]
+  if name not in OPS_FILES or name in seen:raise ValueError("invalid snapshot member")
+  seen.add(name);b=bytes.fromhex(x["content_hex"])
+  if len(b)!=x["size"] or __import__("hashlib").sha256(b).hexdigest()!=x["sha256"]:raise ValueError("snapshot integrity failure")
+  (tmp/name).write_bytes(b)
+ if root.exists():__import__("shutil").rmtree(root)
+ os.replace(tmp,root)
+ return {"restored":True,"files":len(seen),"node_id":obj.get("node_id")}
+
 def _genesis_path(state): return Path(state)/"production-genesis.json"
 def _bind_genesis(state,network_id,chain_id,genesis_id,canonical_genesis):
  p=_genesis_path(state);obj={"schema":"hb-production-genesis-v1","network_id":network_id.hex(),"chain_id":chain_id.hex(),"genesis_id":genesis_id.hex(),"canonical_genesis":canonical_genesis.hex()}
@@ -112,7 +136,7 @@ def main():
   def _send(self,obj,status=200):
    b=json.dumps(obj,separators=(",",":")).encode();self.send_response(status);self.send_header("Content-Type","application/json");self.send_header("Content-Length",str(len(b)));self.end_headers();self.wfile.write(b)
   def do_GET(self):
-   if self.path=="/health":return self._send({"ok":True,"profile":"v0.4.0-testnet","node_id":nid.hex(),"public_key":pk.hex()})
+   if self.path=="/health":return self._send({"ok":True,"profile":"v0.4.0-testnet","node_id":nid.hex(),"public_key":pk.hex()})\n   if self.path=="/operations/snapshot":return self._send(_ops_snapshot(a.state))
    if self.path=="/genesis":
     p=_genesis_path(a.state)
     if not p.exists():return self._send({"node_id":nid.hex(),"bound":False})
@@ -130,7 +154,7 @@ def main():
    try:
     n=int(self.headers.get("Content-Length","0"));o=json.loads(self.rfile.read(n))
    except Exception:return self._send({"error":"invalid json"},400)
-   if self.path=="/genesis/bind":
+   if self.path=="/operations/restore-sandbox":\n    try:return self._send(_ops_restore_sandbox(a.state,o))\n    except Exception as e:return self._send({"error":str(e)},409)\n   if self.path=="/genesis/bind":
     try:
      net=bytes.fromhex(o["network_id"]);chain=bytes.fromhex(o["chain_id"]);gid=bytes.fromhex(o["genesis_id"]);canonical=bytes.fromhex(o["canonical_genesis"])
      if any(len(x)!=32 for x in (net,chain,gid)) or not canonical:raise ValueError()
