@@ -101,6 +101,13 @@ def main():
     except Exception:return self._send({"error":"invalid challenge"},400)
     msg=CHALLENGE_DOMAIN+nid+challenge
     return self._send({"node_id":nid.hex(),"public_key":pk.hex(),"challenge":challenge.hex(),"signature":sk.sign(msg).hex()})
+   if self.path=="/enrollment/challenge":
+    try:
+     net=bytes.fromhex(o["network_id"]);challenge=bytes.fromhex(o["challenge"])
+     if len(net)!=32 or len(challenge)!=32:raise ValueError()
+     msg=ENROLLMENT_CHALLENGE_DOMAIN+_cbor([1,net,nid,challenge])
+     return self._send({"node_id":nid.hex(),"public_key":pk.hex(),"network_id":net.hex(),"challenge":challenge.hex(),"signature":sk.sign(msg).hex()})
+    except Exception:return self._send({"error":"invalid enrollment challenge"},400)
    if self.path=="/finality/vote":
     try:
      version=int(o["validator_set_version"]);vsd=bytes.fromhex(o["validator_set_digest"]);net=bytes.fromhex(o["network_id"]);count=int(o["count"]);bid=bytes.fromhex(o["block_id"])
