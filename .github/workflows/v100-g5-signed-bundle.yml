@@ -80,7 +80,8 @@ jobs:
           (cd verifier && sha256sum -c gh-verifier.sha256)
           chmod 755 verifier/gh-verifier
           verifier/gh-verifier attestation verify tep-v1.0.0-mainnet-bundle.tar.gz --repo hashburst/tep
-          rm -rf verified tampered.tar.gz unsigned.tar.gz\n          mkdir verified; tar -xzf tep-v1.0.0-mainnet-bundle.tar.gz -C verified
+          rm -rf verified tampered.tar.gz unsigned.tar.gz
+          mkdir verified; tar -xzf tep-v1.0.0-mainnet-bundle.tar.gz -C verified
           python3 - <<'PY'
           import hashlib,json
           p="verified/";m=json.load(open(p+"release-manifest.json"))
