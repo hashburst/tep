@@ -53,7 +53,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo -n /usr/local/sbin/hashburst-testnet-admin start
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
           for i in $(seq 1 20); do
             if python3 -c 'import json,urllib.request; d=json.load(urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=2)); assert d; print(json.dumps(d,sort_keys=True))'; then
               echo "LOCAL_HEALTH_OK"
@@ -94,7 +94,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo -n /usr/local/sbin/hashburst-testnet-admin start
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
           for i in $(seq 1 20); do
             if python3 -c 'import json,urllib.request; d=json.load(urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=2)); assert d; print(json.dumps(d,sort_keys=True))'; then echo LOCAL_HEALTH_OK; exit 0; fi
             sleep 1
@@ -132,7 +132,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo -n /usr/local/sbin/hashburst-testnet-admin start
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
           for i in $(seq 1 20); do
             if python3 -c 'import json,urllib.request; d=json.load(urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=2)); assert d; print(json.dumps(d,sort_keys=True))'; then echo LOCAL_HEALTH_OK; exit 0; fi
             sleep 1
@@ -170,7 +170,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo -n /usr/local/sbin/hashburst-testnet-admin start
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
           for i in $(seq 1 20); do
             if python3 -c 'import json,urllib.request; d=json.load(urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=2)); assert d; print(json.dumps(d,sort_keys=True))'; then echo LOCAL_HEALTH_OK; exit 0; fi
             sleep 1
