@@ -1,0 +1,37 @@
+name: Attest TEP v1.0.0-mainnet tag binding
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/attest-v100-mainnet-tag.yml]
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+jobs:
+  attest:
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: v1.0.0-mainnet
+      TARGET_SHA: e9b47d28114d2c4dc7d622c1b9f2efbbd8fbbb52
+      TAG_OBJECT_SHA: 899e2a8cda0cf689babd8e861ff509fbf638f8d3
+      G5_RUN: "41235550981"
+      G7_RUN: "41235551083"
+    steps:
+      - name: Build immutable tag binding manifest
+        run: |
+          set -euo pipefail
+          REF=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)
+          test "$REF" = "$TAG_OBJECT_SHA"
+          OBJ=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$REF" --jq .object.sha)
+          test "$OBJ" = "$TARGET_SHA"
+          ASSET_DIGEST=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '.assets[] | select(.name=="tep-v1.0.0-mainnet-bundle.tar.gz") | .digest')
+          test -n "$ASSET_DIGEST"
+          printf '{"schema":"hb-tep-release-tag-binding-v1","tag":"%s","tag_object_sha":"%s","target_commit":"%s","release_asset_digest":"%s","g5_run":%s,"g7_run":%s,"hvm_hbt":"HOLD"}\n' "$TAG" "$TAG_OBJECT_SHA" "$TARGET_SHA" "$ASSET_DIGEST" "$G5_RUN" "$G7_RUN" > v1.0.0-mainnet-tag-binding.json
+          cat v1.0.0-mainnet-tag-binding.json
+      - uses: actions/attest-build-provenance@v3
+        with: {subject-path: v1.0.0-mainnet-tag-binding.json}
+      - name: Attach binding manifest to release
+        run: |
+          gh release upload "$TAG" v1.0.0-mainnet-tag-binding.json --clobber
+          echo "TEP_V1_MAINNET_TAG_ATTESTED_OK tag=$TAG tag_object=$TAG_OBJECT_SHA target=$TARGET_SHA"
