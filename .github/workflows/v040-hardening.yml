@@ -60,7 +60,7 @@ jobs:
           b=json.loads(os.environ["BEFORE"]);fb=json.loads(os.environ["FINAL_BEFORE"])
           h=json.load(urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=3));f=json.load(urllib.request.urlopen("http://127.0.0.1:47840/finality/head",timeout=3))
           assert h["node_id"]==b["node_id"] and h["public_key"]==b["public_key"]
-          assert f["checkpoint_id"]==fb["checkpoint_id"]=="17c950be4d47cff29d2eb021ad4f273ced96accb4d3fb2896ce8003af989ab89"
+          assert fb["finalized"] and f["finalized"] and f["checkpoint_id"]==fb["checkpoint_id"]
           print("HARDENING_RESTART_CONTINUITY_OK node_id="+h["node_id"]+" checkpoint_id="+f["checkpoint_id"],flush=True)
           PY
       - name: Syntax and source tests available on peer
