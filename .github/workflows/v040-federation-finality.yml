@@ -1,0 +1,137 @@
+name: TEP v0.4.0 real federation QC finality gate
+on:
+  workflow_dispatch:
+  push:
+    branches: [testnet/v0.4.0-remote-deploy]
+    paths:
+      - .github/workflows/v040-federation-finality.yml
+      - tools/testnet_peer_v040.py
+      - src/hashburst_tep/federation.py
+      - src/hashburst_tep/finalizer.py
+permissions:
+  contents: read
+jobs:
+  vote:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["153","154","155","157"]
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Deploy exact peer revision
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
+      - name: Produce persistent-identity finality vote
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,urllib.request,hashlib
+          ips=["77.90.188.153","77.90.188.154","77.90.188.155","77.90.188.157"]
+          def cbor(v):
+           if isinstance(v,int):
+            if v<24:return bytes([v])
+            if v<256:return b"\x18"+bytes([v])
+            if v<65536:return b"\x19"+v.to_bytes(2,"big")
+            if v<2**32:return b"\x1a"+v.to_bytes(4,"big")
+            return b"\x1b"+v.to_bytes(8,"big")
+           if isinstance(v,bytes):
+            h=cbor(len(v));return bytes([h[0]|0x40])+h[1:]+v
+           if isinstance(v,(list,tuple)):
+            h=cbor(len(v));return bytes([h[0]|0x80])+h[1:]+b"".join(cbor(x) for x in v)
+          hs=[]
+          for ip in ips:
+           with urllib.request.urlopen("http://"+ip+":47840/health",timeout=5) as r: hs.append(json.load(r))
+          vals=sorted([(bytes.fromhex(x["node_id"]),bytes.fromhex(x["public_key"])) for x in hs])
+          vsd=hashlib.sha3_256(b"HB-TEP-VALIDATOR-SET-v1\x00"+cbor([1,1,[[i,k] for i,k in vals]])).digest()
+          challenge=bytes.fromhex("2dad99f384891302f205808630d94a78fde202cdb44ad63d949be226d110f95a")
+          osh=bytes.fromhex("7fee3647a08fa97386b254a9b4fede88bc43645ac419542b14e2306738442d4e")
+          psh=bytes.fromhex("3678d9b5a11bb79367a7974c067b9a1ffb3df47dc41f06be4fee18753eecacf3")
+          bid=hashlib.sha3_256(b"HB-TEP-TESTNET-CG-WESO-FINALITY-v1\x00"+challenge+osh+psh).digest()
+          net=bytes.fromhex("a5"*32)
+          body={"validator_set_version":1,"validator_set_digest":vsd.hex(),"network_id":net.hex(),"count":4,"block_id":bid.hex()}
+          req=urllib.request.Request("http://127.0.0.1:47840/finality/vote",data=json.dumps(body).encode(),headers={"Content-Type":"application/json"})
+          with urllib.request.urlopen(req,timeout=5) as r: vote=json.load(r)
+          out={"validators":[{"validator_id":i.hex(),"public_key":k.hex()} for i,k in vals],"validator_set_digest":vsd.hex(),"network_id":net.hex(),"count":4,"block_id":bid.hex(),"vote":{"validator_id":vote["validator_id"],"signature":vote["signature"]}}
+          open("finality-vote.json","w").write(json.dumps(out,sort_keys=True))
+          print("FEDERATION_PERSISTENT_VOTE_OK validator_id="+vote["validator_id"]+" block_id="+bid.hex(),flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: finality-vote-${{ matrix.node }}
+          path: finality-vote.json
+  qc:
+    needs: [vote]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: {pattern: "finality-vote-*", path: votes}
+      - run: python3 -m pip install --disable-pip-version-check cryptography==50.0.2
+      - name: Verify 4 signatures, negative 2-of-4, construct QC
+        run: |
+          set -euo pipefail
+          PYTHONPATH=src python3 - <<'PY'
+          import glob,json
+          from hashburst_tep.federation import Validator,ValidatorSet,FinalityVote,QuorumCertificate,verify_qc
+          fs=glob.glob("votes/**/finality-vote.json",recursive=True);assert len(fs)==4,fs
+          rows=[json.load(open(f)) for f in fs];base=rows[0]
+          assert all(r["validators"]==base["validators"] and r["block_id"]==base["block_id"] for r in rows)
+          vals=tuple(Validator(bytes.fromhex(x["validator_id"]),bytes.fromhex(x["public_key"])) for x in base["validators"])
+          vs=ValidatorSet(1,vals);assert vs.threshold()==3 and vs.digest().hex()==base["validator_set_digest"]
+          votes=tuple(FinalityVote(bytes.fromhex(r["vote"]["validator_id"]),bytes.fromhex(r["vote"]["signature"])) for r in rows)
+          shell=dict(validator_set_version=1,validator_set_digest=vs.digest(),network_id=bytes.fromhex(base["network_id"]),count=4,block_id=bytes.fromhex(base["block_id"]))
+          q2=QuorumCertificate(**shell,votes=votes[:2]);assert not verify_qc(q2,vs)
+          q4=QuorumCertificate(**shell,votes=votes);assert verify_qc(q4,vs)
+          out={**base,"votes":[{"validator_id":v.validator_id.hex(),"signature":v.signature.hex()} for v in votes],"qc_digest":q4.digest().hex()}
+          open("finality-qc.json","w").write(json.dumps(out,sort_keys=True))
+          print("FEDERATION_QC_4OF4_OK votes=4 threshold=3 negative_2of4_rejected=1 qc_digest="+q4.digest().hex(),flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: finality-qc, path: finality-qc.json}
+  finalize:
+    needs: [qc]
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["153","154","155","157"]
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: finality-qc}
+      - name: Verify QC and persist same checkpoint locally
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,urllib.request,hashlib
+          q=json.load(open("finality-qc.json"))
+          body={k:q[k] for k in ("validators","votes","network_id","count","block_id")}
+          body["validator_set_version"]=1
+          body["h"]=hashlib.sha3_256(b"HB-TEP-POH-OUTPUT-v1\x00"+bytes.fromhex("2dad99f384891302f205808630d94a78fde202cdb44ad63d949be226d110f95a")+bytes.fromhex("7fee3647a08fa97386b254a9b4fede88bc43645ac419542b14e2306738442d4e")).hexdigest()
+          body["vdf_params_hash"]=hashlib.sha3_256(b"HB-TEP-CG-WESO-v1|1024|4096").hexdigest()
+          req=urllib.request.Request("http://127.0.0.1:47840/finality/commit",data=json.dumps(body).encode(),headers={"Content-Type":"application/json"})
+          with urllib.request.urlopen(req,timeout=5) as r: out=json.load(r)
+          assert out["votes"]==4 and out["threshold"]==3
+          open("finalized.json","w").write(json.dumps(out,sort_keys=True))
+          print("FINALITY_PERSIST_OK node_id="+out["node_id"]+" checkpoint_id="+out["checkpoint_id"],flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: "finalized-${{ matrix.node }}", path: finalized.json}
+  certify:
+    needs: [finalize]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {pattern: "finalized-*", path: finalized}
+      - run: |
+          python3 - <<'PY'
+          import glob,json
+          fs=glob.glob("finalized/**/finalized.json",recursive=True);assert len(fs)==4,fs
+          rows=[json.load(open(f)) for f in fs];ids={r["checkpoint_id"] for r in rows};assert len(ids)==1
+          assert len({r["node_id"] for r in rows})==4
+          print("FEDERATION_QC_FINALITY_4OF4_OK votes=4 threshold=3 checkpoint_id="+next(iter(ids))+" finalized_hosts=4",flush=True)
+          PY
