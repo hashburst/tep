@@ -33,5 +33,5 @@ jobs:
         with: {subject-path: v1.0.0-mainnet-tag-binding.json}
       - name: Attach binding manifest to release
         run: |
-          gh release upload "$TAG" v1.0.0-mainnet-tag-binding.json --clobber
+          gh release upload "$TAG" v1.0.0-mainnet-tag-binding.json --clobber --repo "$GITHUB_REPOSITORY"
           echo "TEP_V1_MAINNET_TAG_ATTESTED_OK tag=$TAG tag_object=$TAG_OBJECT_SHA target=$TARGET_SHA"
