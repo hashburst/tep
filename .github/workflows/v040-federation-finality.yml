@@ -11,7 +11,70 @@ on:
 permissions:
   contents: read
 jobs:
+  identity:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["153","154","155","157"]
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Deploy exact peer revision and export local persistent identity
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
+          for i in $(seq 1 20); do
+            if python3 - <<'PY'
+          import json,urllib.request
+          with urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=2) as r: h=json.load(r)
+          open("identity.json","w").write(json.dumps({"validator_id":h["node_id"],"public_key":h["public_key"]},sort_keys=True))
+          print("FEDERATION_IDENTITY_OK validator_id="+h["node_id"],flush=True)
+          PY
+            then break; fi
+            sleep 1
+          done
+          test -s identity.json
+      - uses: actions/upload-artifact@v4
+        with: {name: "federation-identity-${{ matrix.node }}", path: identity.json}
+
+  proposal:
+    needs: [identity]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {pattern: "federation-identity-*", path: identities}
+      - name: Build canonical validator set and proposal
+        run: |
+          python3 - <<'PY'
+          import glob,json,hashlib
+          def cbor(v):
+           if isinstance(v,int):
+            if v<24:return bytes([v])
+            if v<256:return b"\x18"+bytes([v])
+            if v<65536:return b"\x19"+v.to_bytes(2,"big")
+            if v<2**32:return b"\x1a"+v.to_bytes(4,"big")
+            return b"\x1b"+v.to_bytes(8,"big")
+           if isinstance(v,bytes):
+            h=cbor(len(v));return bytes([h[0]|0x40])+h[1:]+v
+           if isinstance(v,(list,tuple)):
+            h=cbor(len(v));return bytes([h[0]|0x80])+h[1:]+b"".join(cbor(x) for x in v)
+          fs=glob.glob("identities/**/identity.json",recursive=True);assert len(fs)==4,fs
+          ids=[json.load(open(f)) for f in fs];assert len({x["validator_id"] for x in ids})==4
+          vals=sorted([(bytes.fromhex(x["validator_id"]),bytes.fromhex(x["public_key"])) for x in ids])
+          vsd=hashlib.sha3_256(b"HB-TEP-VALIDATOR-SET-v1\x00"+cbor([1,1,[[i,k] for i,k in vals]])).digest()
+          challenge=bytes.fromhex("2dad99f384891302f205808630d94a78fde202cdb44ad63d949be226d110f95a");osh=bytes.fromhex("7fee3647a08fa97386b254a9b4fede88bc43645ac419542b14e2306738442d4e");psh=bytes.fromhex("3678d9b5a11bb79367a7974c067b9a1ffb3df47dc41f06be4fee18753eecacf3")
+          bid=hashlib.sha3_256(b"HB-TEP-TESTNET-CG-WESO-FINALITY-v1\x00"+challenge+osh+psh).digest()
+          out={"validators":[{"validator_id":i.hex(),"public_key":k.hex()} for i,k in vals],"validator_set_version":1,"validator_set_digest":vsd.hex(),"network_id":"a5"*32,"count":4,"block_id":bid.hex()}
+          open("finality-proposal.json","w").write(json.dumps(out,sort_keys=True))
+          print("FEDERATION_PROPOSAL_4OF4_IDENTITIES_OK validator_set_digest="+vsd.hex()+" block_id="+bid.hex(),flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: finality-proposal, path: finality-proposal.json}
+
   vote:
+    needs: [proposal]
     strategy:
       fail-fast: false
       matrix:
@@ -26,39 +89,20 @@ jobs:
           set -euo pipefail
           sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
           sudo -n /usr/local/sbin/hashburst-testnet-admin restart
+      - uses: actions/download-artifact@v4
+        with: {name: finality-proposal}
       - name: Produce persistent-identity finality vote
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json,urllib.request,hashlib
-          ips=["77.90.188.153","77.90.188.154","77.90.188.155","77.90.188.157"]
-          def cbor(v):
-           if isinstance(v,int):
-            if v<24:return bytes([v])
-            if v<256:return b"\x18"+bytes([v])
-            if v<65536:return b"\x19"+v.to_bytes(2,"big")
-            if v<2**32:return b"\x1a"+v.to_bytes(4,"big")
-            return b"\x1b"+v.to_bytes(8,"big")
-           if isinstance(v,bytes):
-            h=cbor(len(v));return bytes([h[0]|0x40])+h[1:]+v
-           if isinstance(v,(list,tuple)):
-            h=cbor(len(v));return bytes([h[0]|0x80])+h[1:]+b"".join(cbor(x) for x in v)
-          hs=[]
-          for ip in ips:
-           with urllib.request.urlopen("http://"+ip+":47840/health",timeout=5) as r: hs.append(json.load(r))
-          vals=sorted([(bytes.fromhex(x["node_id"]),bytes.fromhex(x["public_key"])) for x in hs])
-          vsd=hashlib.sha3_256(b"HB-TEP-VALIDATOR-SET-v1\x00"+cbor([1,1,[[i,k] for i,k in vals]])).digest()
-          challenge=bytes.fromhex("2dad99f384891302f205808630d94a78fde202cdb44ad63d949be226d110f95a")
-          osh=bytes.fromhex("7fee3647a08fa97386b254a9b4fede88bc43645ac419542b14e2306738442d4e")
-          psh=bytes.fromhex("3678d9b5a11bb79367a7974c067b9a1ffb3df47dc41f06be4fee18753eecacf3")
-          bid=hashlib.sha3_256(b"HB-TEP-TESTNET-CG-WESO-FINALITY-v1\x00"+challenge+osh+psh).digest()
-          net=bytes.fromhex("a5"*32)
-          body={"validator_set_version":1,"validator_set_digest":vsd.hex(),"network_id":net.hex(),"count":4,"block_id":bid.hex()}
+          import json,urllib.request
+          p=json.load(open("finality-proposal.json"))
+          body={k:p[k] for k in ("validator_set_version","validator_set_digest","network_id","count","block_id")}
           req=urllib.request.Request("http://127.0.0.1:47840/finality/vote",data=json.dumps(body).encode(),headers={"Content-Type":"application/json"})
           with urllib.request.urlopen(req,timeout=5) as r: vote=json.load(r)
-          out={"validators":[{"validator_id":i.hex(),"public_key":k.hex()} for i,k in vals],"validator_set_digest":vsd.hex(),"network_id":net.hex(),"count":4,"block_id":bid.hex(),"vote":{"validator_id":vote["validator_id"],"signature":vote["signature"]}}
+          out={**p,"vote":{"validator_id":vote["validator_id"],"signature":vote["signature"]}}
           open("finality-vote.json","w").write(json.dumps(out,sort_keys=True))
-          print("FEDERATION_PERSISTENT_VOTE_OK validator_id="+vote["validator_id"]+" block_id="+bid.hex(),flush=True)
+          print("FEDERATION_PERSISTENT_VOTE_OK validator_id="+vote["validator_id"]+" block_id="+p["block_id"],flush=True)
           PY
       - uses: actions/upload-artifact@v4
         with:
