@@ -1,0 +1,5 @@
+HashBurst TEP v1.0.0-mainnet release candidate freeze
+Scope: TEP only
+HVM/HBT: HOLD - excluded from this release
+Required gates: G1-G7 PASS
+Final candidate verification: G5 supply-chain + G7 full CI + G7 four-host acceptance on identical SHA

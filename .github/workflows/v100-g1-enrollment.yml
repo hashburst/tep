@@ -1,0 +1,27 @@
+name: TEP v1.0 G1 enrollment production CI
+on:
+  push:
+    branches: [mainnet/v1.0.0-g1-enrollment]
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  enrollment-conformance:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements-rc1.txt
+      - name: Enrollment production tests
+        env:
+          PYTHONPATH: src
+        run: |
+          set -euo pipefail
+          python -m unittest tests.test_enrollment_production_v100 -v
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          echo "ENROLLMENT_PRODUCTION_CI_OK sha=$GITHUB_SHA"

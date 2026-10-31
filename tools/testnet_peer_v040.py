@@ -14,6 +14,10 @@ FINALITY_VOTE_DOMAIN=b"HB-TEP-FINALITY-VOTE-v1\x00"
 FINALITY_QC_DOMAIN=b"HB-TEP-FINALITY-QC-v1\x00"
 VALIDATOR_SET_DOMAIN=b"HB-TEP-VALIDATOR-SET-v1\x00"
 CHECKPOINT_DOMAIN=b"HB-TEP-CHECKPOINT-v1\x00"
+ENROLLMENT_CHALLENGE_DOMAIN=b"HB-TEP-ENROLLMENT-CHALLENGE-v1\x00"
+VALIDATOR_GOVERNANCE_VOTE_DOMAIN=b"HB-TEP-VALIDATOR-GOVERNANCE-VOTE-v1\x00"
+ANTI_EQUIVOCATION_LOCK_DOMAIN=b"HB-TEP-ANTI-EQUIVOCATION-LOCK-v1\x00"
+NETWORK_GENESIS_DOMAIN=b"HB-TEP-NETWORK-GENESIS-v1\x00"
 
 def _cbor(v):
  if isinstance(v,int):
@@ -73,6 +77,58 @@ def _append(state,index,previous,payload):
   f.write(json.dumps(row,separators=(",",":"))+"\n");f.flush();os.fsync(f.fileno())
  return row
 
+def _vote_lock_path(state): return Path(state)/"anti-equivocation-vote-lock.json"
+def _vote_lock_key(federation_id,set_version,count,validator_id):
+ return sha3_256(ANTI_EQUIVOCATION_LOCK_DOMAIN+_cbor([1,federation_id,set_version,count,validator_id])).hexdigest()
+def _authorize_vote_lock(state,federation_id,set_version,count,validator_id,proposal_digest):
+ p=_vote_lock_path(state);locks={}
+ if p.exists():
+  raw=json.loads(p.read_text());
+  if raw.get("schema")!="hb-vote-lock-v1":raise ValueError("invalid vote-lock schema")
+  locks=dict(raw.get("locks",{}))
+ key=_vote_lock_key(federation_id,set_version,count,validator_id);ph=proposal_digest.hex();prior=locks.get(key)
+ if prior is not None:
+  if prior==ph:return "IDEMPOTENT"
+  raise ValueError("equivocation rejected")
+ locks[key]=ph;tmp=p.with_suffix(".tmp")
+ with tmp.open("w") as h:json.dump({"schema":"hb-vote-lock-v1","locks":dict(sorted(locks.items()))},h,sort_keys=True,separators=(",",":"));h.flush();os.fsync(h.fileno())
+ os.replace(tmp,p);return "LOCKED"
+
+OPS_FILES=("production-genesis.json","finalized-checkpoint.bin","testnet-ledger.jsonl","anti-equivocation-vote-lock.json")
+def _ops_snapshot(state):
+ rows=[]
+ for name in OPS_FILES:
+  p=Path(state)/name
+  if p.is_file():
+   b=p.read_bytes();rows.append({"path":name,"size":len(b),"sha256":__import__("hashlib").sha256(b).hexdigest(),"content_hex":b.hex()})
+ return {"schema":"hb-tep-ops-snapshot-v1","node_id":_load_or_create(state)[2].hex(),"files":rows}
+def _ops_restore_sandbox(state,obj):
+ if obj.get("schema")!="hb-tep-ops-snapshot-v1":raise ValueError("invalid snapshot schema")
+ root=Path(state)/"dr-restore-sandbox";tmp=Path(state)/".dr-restore-sandbox.tmp"
+ if tmp.exists():__import__("shutil").rmtree(tmp)
+ tmp.mkdir()
+ seen=set()
+ for x in obj.get("files",[]):
+  name=x["path"]
+  if name not in OPS_FILES or name in seen:raise ValueError("invalid snapshot member")
+  seen.add(name);b=bytes.fromhex(x["content_hex"])
+  if len(b)!=x["size"] or __import__("hashlib").sha256(b).hexdigest()!=x["sha256"]:raise ValueError("snapshot integrity failure")
+  (tmp/name).write_bytes(b)
+ if root.exists():__import__("shutil").rmtree(root)
+ os.replace(tmp,root)
+ return {"restored":True,"files":len(seen),"node_id":obj.get("node_id")}
+
+def _genesis_path(state): return Path(state)/"production-genesis.json"
+def _bind_genesis(state,network_id,chain_id,genesis_id,canonical_genesis):
+ p=_genesis_path(state);obj={"schema":"hb-production-genesis-v1","network_id":network_id.hex(),"chain_id":chain_id.hex(),"genesis_id":genesis_id.hex(),"canonical_genesis":canonical_genesis.hex()}
+ if p.exists():
+  prior=json.loads(p.read_text())
+  if prior!=obj:raise ValueError("genesis mutation or cross-network rejected")
+  return "IDEMPOTENT"
+ tmp=p.with_suffix(".tmp")
+ with tmp.open("w") as h:json.dump(obj,h,sort_keys=True,separators=(",",":"));h.flush();os.fsync(h.fileno())
+ os.replace(tmp,p);return "BOUND"
+
 def main():
  ap=argparse.ArgumentParser();ap.add_argument("--listen",default="127.0.0.1");ap.add_argument("--port",type=int,default=47840);ap.add_argument("--state",required=True);a=ap.parse_args()
  sk,pk,nid=_load_or_create(a.state)
@@ -81,6 +137,11 @@ def main():
    b=json.dumps(obj,separators=(",",":")).encode();self.send_response(status);self.send_header("Content-Type","application/json");self.send_header("Content-Length",str(len(b)));self.end_headers();self.wfile.write(b)
   def do_GET(self):
    if self.path=="/health":return self._send({"ok":True,"profile":"v0.4.0-testnet","node_id":nid.hex(),"public_key":pk.hex()})
+   if self.path=="/operations/snapshot":return self._send(_ops_snapshot(a.state))
+   if self.path=="/genesis":
+    p=_genesis_path(a.state)
+    if not p.exists():return self._send({"node_id":nid.hex(),"bound":False})
+    o=json.loads(p.read_text());o["node_id"]=nid.hex();o["bound"]=True;return self._send(o)
    if self.path=="/finality/head":
     p=Path(a.state)/"finalized-checkpoint.bin"
     if not p.exists():return self._send({"node_id":nid.hex(),"finalized":False})
@@ -94,6 +155,17 @@ def main():
    try:
     n=int(self.headers.get("Content-Length","0"));o=json.loads(self.rfile.read(n))
    except Exception:return self._send({"error":"invalid json"},400)
+   if self.path=="/operations/restore-sandbox":
+    try:return self._send(_ops_restore_sandbox(a.state,o))
+    except Exception as e:return self._send({"error":str(e)},409)
+   if self.path=="/genesis/bind":
+    try:
+     net=bytes.fromhex(o["network_id"]);chain=bytes.fromhex(o["chain_id"]);gid=bytes.fromhex(o["genesis_id"]);canonical=bytes.fromhex(o["canonical_genesis"])
+     if any(len(x)!=32 for x in (net,chain,gid)) or not canonical:raise ValueError()
+     if sha3_256(NETWORK_GENESIS_DOMAIN+canonical).digest()!=gid:raise ValueError("genesis id mismatch")
+     status=_bind_genesis(a.state,net,chain,gid,canonical)
+     return self._send({"node_id":nid.hex(),"network_id":net.hex(),"chain_id":chain.hex(),"genesis_id":gid.hex(),"bind_status":status})
+    except Exception:return self._send({"error":"invalid or conflicting genesis"},409)
    if self.path=="/challenge":
     try:
      challenge=bytes.fromhex(o["challenge"])
@@ -101,6 +173,21 @@ def main():
     except Exception:return self._send({"error":"invalid challenge"},400)
     msg=CHALLENGE_DOMAIN+nid+challenge
     return self._send({"node_id":nid.hex(),"public_key":pk.hex(),"challenge":challenge.hex(),"signature":sk.sign(msg).hex()})
+   if self.path=="/enrollment/challenge":
+    try:
+     net=bytes.fromhex(o["network_id"]);challenge=bytes.fromhex(o["challenge"])
+     if len(net)!=32 or len(challenge)!=32:raise ValueError()
+     msg=ENROLLMENT_CHALLENGE_DOMAIN+_cbor([1,net,nid,challenge])
+     return self._send({"node_id":nid.hex(),"public_key":pk.hex(),"network_id":net.hex(),"challenge":challenge.hex(),"signature":sk.sign(msg).hex()})
+    except Exception:return self._send({"error":"invalid enrollment challenge"},400)
+   if self.path=="/governance/vote":
+    try:
+     federation_id=bytes.fromhex(o["federation_id"]);set_version=int(o["validator_set_version"]);count=int(o["count"]);set_digest=bytes.fromhex(o["validator_set_digest"]);proposal_digest=bytes.fromhex(o["proposal_digest"])
+     if set_version<0 or count<0 or len(federation_id)!=32 or len(set_digest)!=32 or len(proposal_digest)!=32:raise ValueError()
+     lock_status=_authorize_vote_lock(a.state,federation_id,set_version,count,nid,proposal_digest)
+     msg=VALIDATOR_GOVERNANCE_VOTE_DOMAIN+_cbor([1,set_version,set_digest,proposal_digest])
+     return self._send({"node_id":nid.hex(),"validator_id":nid.hex(),"public_key":pk.hex(),"signature":sk.sign(msg).hex(),"lock_status":lock_status})
+    except Exception:return self._send({"error":"invalid governance vote request"},400)
    if self.path=="/finality/vote":
     try:
      version=int(o["validator_set_version"]);vsd=bytes.fromhex(o["validator_set_digest"]);net=bytes.fromhex(o["network_id"]);count=int(o["count"]);bid=bytes.fromhex(o["block_id"])

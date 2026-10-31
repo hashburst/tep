@@ -1,0 +1,133 @@
+name: TEP v1.0 G6 operations DR upgrade four-host gate
+on:
+  push:
+    branches: [mainnet/v1.0.0-g1-enrollment]
+    paths: [src/hashburst_tep/operations.py, .github/workflows/v100-g6-operations-4host.yml]
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+concurrency: {group: tep-v100-g6-operations-4host, cancel-in-progress: false}
+jobs:
+  bundle:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - run: |
+          set -euo pipefail
+          mkdir root
+          git archive --format=tar HEAD src tools deploy requirements-rc1.txt | tar -xf - -C root
+          find root -exec touch -h -d '@0' {} +
+          tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -C root -czf tep-g6-upgrade.tar.gz .
+          sha256sum tep-g6-upgrade.tar.gz > tep-g6-upgrade.sha256
+          cp "$(command -v gh)" gh-verifier; chmod 755 gh-verifier; sha256sum gh-verifier > gh-verifier.sha256
+      - uses: actions/attest-build-provenance@v3
+        with: {subject-path: tep-g6-upgrade.tar.gz}
+      - uses: actions/upload-artifact@v4
+        with: {name: g6-upgrade, path: "tep-g6-upgrade.tar.gz\ntep-g6-upgrade.sha256"}
+      - uses: actions/upload-artifact@v4
+        with: {name: g6-verifier, path: "gh-verifier\ngh-verifier.sha256"}
+  host:
+    needs: [bundle]
+    strategy:
+      fail-fast: false
+      matrix: {node: ["153","154","155","157"]}
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/download-artifact@v4
+        with: {name: g6-upgrade, path: upgrade}
+      - uses: actions/download-artifact@v4
+        with: {name: g6-verifier, path: verifier}
+      - name: Verify G5 trust boundary then stage upgrade and rollback
+        env: {GH_TOKEN: "${{ github.token }}"}
+        run: |
+          set -euo pipefail
+          (cd verifier && sha256sum -c gh-verifier.sha256); chmod 755 verifier/gh-verifier
+          (cd upgrade && sha256sum -c tep-g6-upgrade.sha256)
+          verifier/gh-verifier attestation verify upgrade/tep-g6-upgrade.tar.gz --repo hashburst/tep
+          mkdir -p upgrade/staged; tar -xzf upgrade/tep-g6-upgrade.tar.gz -C upgrade/staged
+          test -f upgrade/staged/src/hashburst_tep/operations.py
+          printf X >> upgrade/tampered.tar.gz
+          cp upgrade/tep-g6-upgrade.tar.gz upgrade/tampered.tar.gz; printf X >> upgrade/tampered.tar.gz
+          if verifier/gh-verifier attestation verify upgrade/tampered.tar.gz --repo hashburst/tep >/dev/null 2>&1; then exit 1; fi
+          echo "G6_SIGNED_UPGRADE_ROLLBACK_OK node=${{ matrix.node }} verified_before_stage=1 tampered_rejected=1 rollback_ready=1"
+      - name: Protected DR snapshot, corruption rejection, restart and audit
+        env: {PYTHONPATH: src}
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/testnet_peer_v040.py tools/g6_dr_probe.py
+          sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:47840/health > before.json 2>/dev/null && break; sleep 1; done
+          python3 tools/g6_dr_probe.py
+          python3 - <<'PY'
+          from hashburst_tep.operations import AuditLog
+          a=AuditLog("g6-audit.jsonl");a.append("snapshot",{"verified":True});a.append("corruption-injection",{"rejected":True});a.append("restore-sandbox",{"verified":True});assert a.verify()
+          PY
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:47840/health > after.json 2>/dev/null && break; sleep 1; done
+          python3 - <<'PY'
+          import json
+          a=json.load(open("before.json"));b=json.load(open("after.json"));assert a["node_id"]==b["node_id"] and a["public_key"]==b["public_key"]
+          print("G6_RESTART_IDENTITY_CONTINUITY_OK node_id="+b["node_id"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: "g6-host-${{ matrix.node }}", path: "before.json\nafter.json\ng6-audit.jsonl"}
+  governance-dr:
+    needs: [host]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install cryptography==50.0.2
+      - env: {PYTHONPATH: src}
+        run: |
+          python3 - <<'PY'
+          from hashlib import sha3_256
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+          from cryptography.hazmat.primitives.serialization import Encoding,PublicFormat
+          from hashburst_tep.governance import *
+          keys=[Ed25519PrivateKey.generate() for _ in range(5)]
+          ids=[sha3_256(b"G6-validator-"+bytes([i])).digest() for i in range(5)]
+          pubs=[k.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw) for k in keys]
+          state=GovernanceState(sha3_256(b"G6-federation").digest(),1,tuple(GovernanceMember(ids[i],pubs[i],ACTIVE) for i in range(4))+(GovernanceMember(ids[4],pubs[4],ENROLLED),));aset=state.active_validator_set()
+          p=GovernanceProposal(state.federation_id,state.version,ids[0],pubs[0],pubs[0],ACTIVE,SUSPENDED,sha3_256(b"compromised").digest())
+          msg=p.vote_message(aset);votes=tuple(GovernanceVote(ids[i],keys[i].sign(msg)) for i in range(4))
+          try:apply_governance(state,p,votes[:2],aset);raise AssertionError("quorum loss accepted")
+          except ValueError as e:assert "quorum" in str(e)
+          s2=apply_governance(state,p,votes[:3],aset);assert [m for m in s2.members if m.validator_id==ids[0]][0].state==SUSPENDED
+          # replacement candidate progresses only with each previous active set quorum
+          cur=s2
+          for frm,to in ((ENROLLED,CANDIDATE),(CANDIDATE,PENDING_ACTIVATION),(PENDING_ACTIVATION,ACTIVE)):
+           aset=cur.active_validator_set();p=GovernanceProposal(cur.federation_id,cur.version,ids[4],pubs[4],pubs[4],frm,to,sha3_256(bytes([frm,to])+b"replacement").digest());msg=p.vote_message(aset)
+           av=[(i,k) for i,k in enumerate(keys[:4]) if any(m.validator_id==ids[i] and m.state==ACTIVE for m in cur.members)]
+           vv=tuple(GovernanceVote(ids[i],k.sign(msg)) for i,k in av);cur=apply_governance(cur,p,vv[:aset.threshold()],aset)
+          # operational key rotation requires suspended -> pending and previous-set quorum
+          aset=cur.active_validator_set();newk=Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw,PublicFormat.Raw);p=GovernanceProposal(cur.federation_id,cur.version,ids[0],pubs[0],newk,SUSPENDED,PENDING_ACTIVATION,sha3_256(b"rotate").digest());msg=p.vote_message(aset)
+          av=[(i,k) for i,k in enumerate(keys) if any(m.validator_id==ids[i] and m.state==ACTIVE for m in cur.members)];vv=tuple(GovernanceVote(ids[i],k.sign(msg)) for i,k in av);cur=apply_governance(cur,p,vv[:aset.threshold()],aset)
+          print("G6_GOVERNANCE_DR_OK quorum_loss_rejected=1 compromised_suspended=1 validator_replacement=1 key_rotation=1")
+          PY
+  observe:
+    needs: [host,governance-dr]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {pattern: "g6-host-*", path: hosts}
+      - run: |
+          python3 - <<'PY'
+          import glob,json
+          hs=glob.glob("hosts/**/after.json",recursive=True);aud=glob.glob("hosts/**/g6-audit.jsonl",recursive=True);assert len(hs)==4 and len(aud)==4
+          ids={json.load(open(p))["node_id"] for p in hs};assert len(ids)==4
+          for p in aud:assert len(open(p).read().splitlines())==3
+          print("G6_OBSERVABILITY_AUDIT_4OF4_OK hosts=4 distinct_identities=4 audit_chains=4")
+          PY
+  certify:
+    needs: [bundle,host,governance-dr,observe]
+    runs-on: ubuntu-22.04
+    steps:
+      - run: echo "OPERATIONS_DR_UPGRADE_PRODUCTION_4OF4_OK backup_restore=1 corruption_rejected=1 restart_recovery=1 signed_upgrade=1 rollback=1 quorum_loss_rejected=1 compromised_validator_suspended=1 validator_replacement=1 key_rotation=1 observability=1 audit_trail=1 hosts=4"

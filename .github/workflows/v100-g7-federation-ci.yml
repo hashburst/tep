@@ -1,0 +1,20 @@
+name: TEP v1.0 G7 production federation acceptance CI
+on:
+  push:
+    branches: [mainnet/v1.0.0-g1-enrollment, main]
+    paths: [src/hashburst_tep/federation_admission.py, tests/test_federation_admission_v100.py, .github/workflows/v100-g7-federation-ci.yml, RELEASE-CANDIDATE-v1.0.0-mainnet]
+permissions: {contents: read}
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -r requirements-rc1.txt
+      - env: {PYTHONPATH: src}
+        run: |
+          python -m unittest tests.test_federation_admission_v100 -v
+          python -m unittest discover -s tests -v
+          echo "PRODUCTION_FEDERATION_ACCEPTANCE_CI_OK sha=$GITHUB_SHA"

@@ -1,0 +1,127 @@
+name: TEP v1.0 G2 validator governance four-host gate
+on:
+  push:
+    branches: [mainnet/v1.0.0-g1-enrollment]
+    paths: [src/hashburst_tep/governance.py, src/hashburst_tep/domains.py, tools/testnet_peer_v040.py, .github/workflows/v100-g2-governance-4host.yml]
+permissions: {contents: read}
+concurrency:
+  group: tep-v100-g2-governance-4host
+  cancel-in-progress: false
+jobs:
+  identity:
+    strategy:
+      fail-fast: false
+      matrix: {node: ["153","154","155","157"]}
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Deploy exact G2 peer and export identity
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:47840/health > identity.json 2>/dev/null && break; sleep 1; done
+          python3 -c 'import json;d=json.load(open("identity.json"));assert len(d["node_id"])==64 and len(d["public_key"])==64'
+      - uses: actions/upload-artifact@v4
+        with: {name: "g2-identity-${{ matrix.node }}", path: identity.json}
+  proposal:
+    needs: [identity]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/download-artifact@v4
+        with: {pattern: "g2-identity-*", path: ids}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install cryptography==50.0.2
+      - env: {PYTHONPATH: src}
+        run: |
+          python - <<'PY'
+          import glob,json
+          from hashlib import sha3_256
+          from hashburst_tep.governance import *
+          ids=[json.load(open(p)) for p in sorted(glob.glob("ids/**/identity.json",recursive=True))]
+          members=tuple(GovernanceMember(bytes.fromhex(x["node_id"]),bytes.fromhex(x["public_key"]),ACTIVE) for x in ids)
+          candidate_id=sha3_256(b"HB-TEP-G2-CANDIDATE-v1").digest();candidate_key=sha3_256(b"HB-TEP-G2-CANDIDATE-KEY-v1").digest()
+          state=GovernanceState(sha3_256(b"HB-TEP-G2-FEDERATION-v1").digest(),1,members+(GovernanceMember(candidate_id,candidate_key,ENROLLED),))
+          aset=state.active_validator_set()
+          p=GovernanceProposal(state.federation_id,state.version,candidate_id,candidate_key,candidate_key,ENROLLED,CANDIDATE,sha3_256(b"G2-PROPOSAL-1").digest())
+          json.dump({"federation_id":state.federation_id.hex(),"version":state.version,"members":[{"validator_id":m.validator_id.hex(),"public_key":m.public_key.hex(),"state":m.state} for m in state.members],"proposal":{"validator_id":candidate_id.hex(),"old_public_key":candidate_key.hex(),"new_public_key":candidate_key.hex(),"from_state":ENROLLED,"to_state":CANDIDATE,"nonce":p.nonce.hex()},"validator_set_version":aset.version,"validator_set_digest":aset.digest().hex(),"proposal_digest":p.digest().hex()},open("proposal.json","w"))
+          print("GOVERNANCE_PROPOSAL_4OF4_IDENTITIES_OK set_digest="+aset.digest().hex()+" proposal_digest="+p.digest().hex())
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: g2-proposal, path: proposal.json}
+  vote:
+    needs: [proposal]
+    strategy:
+      fail-fast: false
+      matrix: {node: ["153","154","155","157"]}
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    steps:
+      - uses: actions/download-artifact@v4
+        with: {name: g2-proposal}
+      - name: Sign proposal with real persistent validator key
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,urllib.request
+          p=json.load(open("proposal.json"));body=json.dumps({"validator_set_version":p["validator_set_version"],"validator_set_digest":p["validator_set_digest"],"proposal_digest":p["proposal_digest"]}).encode()
+          r=urllib.request.Request("http://127.0.0.1:47840/governance/vote",data=body,headers={"Content-Type":"application/json"})
+          out=json.load(urllib.request.urlopen(r,timeout=3));json.dump(out,open("vote.json","w"));print("GOVERNANCE_REAL_VOTE_OK validator_id="+out["validator_id"])
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: "g2-vote-${{ matrix.node }}", path: vote.json}
+  quorum:
+    needs: [vote]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/download-artifact@v4
+        with: {name: g2-proposal}
+      - uses: actions/download-artifact@v4
+        with: {pattern: "g2-vote-*", path: votes}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install cryptography==50.0.2
+      - env: {PYTHONPATH: src}
+        run: |
+          python - <<'PY'
+          import glob,json,tempfile
+          from hashburst_tep.governance import *
+          p=json.load(open("proposal.json"));ms=tuple(GovernanceMember(bytes.fromhex(x["validator_id"]),bytes.fromhex(x["public_key"]),x["state"]) for x in p["members"]);state=GovernanceState(bytes.fromhex(p["federation_id"]),p["version"],ms);aset=state.active_validator_set()
+          q=p["proposal"];prop=GovernanceProposal(state.federation_id,state.version,bytes.fromhex(q["validator_id"]),bytes.fromhex(q["old_public_key"]),bytes.fromhex(q["new_public_key"]),q["from_state"],q["to_state"],bytes.fromhex(q["nonce"]))
+          raw=[json.load(open(x)) for x in sorted(glob.glob("votes/**/vote.json",recursive=True))];votes=tuple(GovernanceVote(bytes.fromhex(x["validator_id"]),bytes.fromhex(x["signature"])) for x in raw)
+          try:apply_governance(state,prop,votes[:2],aset);raise AssertionError("2/4 accepted")
+          except ValueError as e:assert "quorum" in str(e)
+          n=apply_governance(state,prop,votes[:3],aset);assert n.version==2
+          try:apply_governance(n,GovernanceProposal(n.federation_id,n.version,prop.validator_id,prop.old_public_key,prop.new_public_key,CANDIDATE,PENDING_ACTIVATION,b"N"*32),votes[:3],aset);raise AssertionError("old set accepted")
+          except ValueError as e:assert "stale authorizing" in str(e)
+          with tempfile.TemporaryDirectory() as d:
+           r=PersistentGovernanceRegistry(d+"/g.json");r.initialize(state);r.apply(prop,votes[:3],aset);before=r.state.digest();r2=PersistentGovernanceRegistry(d+"/g.json");assert r2.state.digest()==before
+          json.dump({"state":{"federation_id":n.federation_id.hex(),"version":n.version,"members":[{"validator_id":m.validator_id.hex(),"public_key":m.public_key.hex(),"state":m.state} for m in n.members]},"votes":[{"validator_id":x.validator_id.hex(),"signature":x.signature.hex()} for x in votes]},open("accepted.json","w"))
+          print("GOVERNANCE_QUORUM_OK two_of_four_rejected=1 three_of_four_accepted=1 stale_set_rejected=1 restart_continuity=1")
+          PY
+      - uses: actions/upload-artifact@v4
+        with: {name: g2-accepted, path: accepted.json}
+  lifecycle:
+    needs: [quorum]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -r requirements-rc1.txt
+      - env: {PYTHONPATH: src}
+        run: |
+          python -m unittest tests.test_governance_production_v100 -v
+          echo "GOVERNANCE_LIFECYCLE_ROTATION_REVOCATION_OK"
+  certify:
+    needs: [identity,proposal,vote,quorum,lifecycle]
+    runs-on: ubuntu-22.04
+    steps:
+      - run: echo "VALIDATOR_GOVERNANCE_PRODUCTION_4OF4_OK lifecycle=1 two_of_four_rejected=1 three_of_four_accepted=1 key_rotation=1 revocation=1 stale_set_rejected=1 restart_continuity=1"
