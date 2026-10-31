@@ -27,8 +27,13 @@ jobs:
           urls=[u for _,u in peers]
           D=b"HB-TEP-TESTNET-LEDGER-v1\x00"; A=b"HB-TEP-TESTNET-LEDGER-ACK-v1\x00"
           heads=[]
-          for u in urls:
-            with urllib.request.urlopen(u+"/ledger/head",timeout=5) as r: heads.append(json.load(r))
+          for name,u in peers:
+            try:
+              with urllib.request.urlopen(u+"/ledger/head",timeout=10) as r: h=json.load(r)
+              heads.append(h)
+              print("PRE_HEAD_OK node=%s height=%s node_id=%s"%(name,h["height"],h["node_id"]),flush=True)
+            except Exception as e:
+              raise SystemExit("PRE_HEAD_UNREACHABLE node=%s error=%r"%(name,e))
           heights={h["height"] for h in heads}
           if len(heights)!=1: raise SystemExit("PRECONDITION_DIVERGENT_HEIGHTS "+repr(sorted(heights)))
           height=heights.pop(); index=height+1
@@ -38,17 +43,25 @@ jobs:
           payload=sha3_256(b"HB-TEP-REAL-MULTIHOST-GATE-v1\x00"+index.to_bytes(8,"big")+prev).digest()
           expected=sha3_256(D+index.to_bytes(8,"big")+prev+payload).digest()
           acks=[]
-          for u in urls:
-            body=json.dumps({"index":index,"previous_entry_id":prev.hex(),"payload":payload.hex()}).encode()
-            req=urllib.request.Request(u+"/ledger/append",data=body,headers={"Content-Type":"application/json"},method="POST")
-            with urllib.request.urlopen(req,timeout=5) as r:o=json.load(r)
-            if bytes.fromhex(o["entry"]["entry_id"])!=expected: raise SystemExit("ENTRY_ID_MISMATCH "+u)
-            nid=bytes.fromhex(o["node_id"]);pk=bytes.fromhex(o["public_key"]);sig=bytes.fromhex(o["signature"])
-            Ed25519PublicKey.from_public_bytes(pk).verify(sig,A+nid+expected)
-            acks.append(o["node_id"])
+          for name,u in peers:
+            try:
+              body=json.dumps({"index":index,"previous_entry_id":prev.hex(),"payload":payload.hex()}).encode()
+              req=urllib.request.Request(u+"/ledger/append",data=body,headers={"Content-Type":"application/json"},method="POST")
+              with urllib.request.urlopen(req,timeout=10) as r:o=json.load(r)
+              if bytes.fromhex(o["entry"]["entry_id"])!=expected: raise RuntimeError("ENTRY_ID_MISMATCH")
+              nid=bytes.fromhex(o["node_id"]);pk=bytes.fromhex(o["public_key"]);sig=bytes.fromhex(o["signature"])
+              Ed25519PublicKey.from_public_bytes(pk).verify(sig,A+nid+expected)
+              acks.append(o["node_id"])
+              print("APPEND_ACK_OK node=%s entry_id=%s node_id=%s"%(name,expected.hex(),o["node_id"]),flush=True)
+            except Exception as e:
+              raise SystemExit("APPEND_ACK_FAILED node=%s error=%r"%(name,e))
           if len(set(acks))!=4: raise SystemExit("ACK_IDENTITIES_NOT_DISTINCT")
-          for u in urls:
-            with urllib.request.urlopen(u+"/ledger/head",timeout=5) as r:h=json.load(r)
-            if h["height"]!=index or bytes.fromhex(h["head"]["entry_id"])!=expected: raise SystemExit("POST_APPEND_DIVERGENCE "+u)
+          for name,u in peers:
+            try:
+              with urllib.request.urlopen(u+"/ledger/head",timeout=10) as r:h=json.load(r)
+              if h["height"]!=index or bytes.fromhex(h["head"]["entry_id"])!=expected: raise RuntimeError("HEAD_MISMATCH")
+              print("POST_HEAD_OK node=%s height=%s entry_id=%s"%(name,h["height"],expected.hex()),flush=True)
+            except Exception as e:
+              raise SystemExit("POST_HEAD_FAILED node=%s error=%r"%(name,e))
           print("LEDGER_MULTIHOST_4OF4_OK index=%d entry_id=%s signed_distinct_acks=4"%(index,expected.hex()))
           PY
