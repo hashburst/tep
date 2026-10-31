@@ -1,0 +1,20 @@
+name: TEP v1.0 G6 operations DR upgrade CI
+on:
+  push:
+    branches: [mainnet/v1.0.0-g1-enrollment]
+    paths: [src/hashburst_tep/operations.py, tests/test_operations_production_v100.py, .github/workflows/v100-g6-operations-ci.yml]
+permissions: {contents: read}
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - run: python -m pip install -r requirements-rc1.txt
+      - env: {PYTHONPATH: src}
+        run: |
+          python -m unittest tests.test_operations_production_v100 -v
+          python -m unittest discover -s tests -p 'test_*.py' -v
+          echo "OPERATIONS_DR_UPGRADE_CI_OK sha=$GITHUB_SHA"
