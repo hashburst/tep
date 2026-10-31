@@ -34,4 +34,27 @@ class EnrollmentProductionTests(unittest.TestCase):
         self.node.public_key().verify(sig,m)
         with self.assertRaises(Exception):self.node.public_key().verify(sig,challenge_message(self.network,self.node_id,b"R"*32))
 
-if __name__=="__main__":unittest.main()
+    def test_persistent_controller_restart_replay_and_serial(self):
+        import tempfile
+        from cryptography.hazmat.primitives.serialization import Encoding,PublicFormat
+        with tempfile.TemporaryDirectory() as d:
+            c1=EnrollmentController(d,self.network);pk=self.node.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw)
+            q=b"A"*32;sig=self.node.sign(challenge_message(self.network,self.node_id,q))
+            cert1=c1.issue(self.node_id,pk,"node",100,200,q,sig);controller_id=c1.controller_id
+            c2=EnrollmentController(d,self.network);self.assertEqual(c2.controller_id,controller_id)
+            self.assertTrue(verify_certificate(cert1,c2.private_key.public_key(),150,self.network))
+            with self.assertRaises(ValueError):c2.issue(self.node_id,pk,"node",100,200,q,sig)
+            q2=b"B"*32;sig2=self.node.sign(challenge_message(self.network,self.node_id,q2))
+            cert2=c2.issue(self.node_id,pk,"storage",100,200,q2,sig2)
+            self.assertGreater(cert2.serial,cert1.serial)
+            c2.registry.revoke(cert1.certificate_id())
+            c3=EnrollmentController(d,self.network);self.assertTrue(c3.registry.is_revoked(cert1.certificate_id()))
+    def test_controller_rejects_invalid_node_signature_and_validator_scope(self):
+        import tempfile
+        from cryptography.hazmat.primitives.serialization import Encoding,PublicFormat
+        with tempfile.TemporaryDirectory() as d:
+            c=EnrollmentController(d,self.network);pk=self.node.public_key().public_bytes(Encoding.Raw,PublicFormat.Raw);q=b"D"*32
+            with self.assertRaises(Exception):c.issue(self.node_id,pk,"node",100,200,q,b"0"*64)
+            sig=self.node.sign(challenge_message(self.network,self.node_id,q))
+            with self.assertRaises(ValueError):c.issue(self.node_id,pk,"validator",100,200,q,sig)
+\nif __name__=="__main__":unittest.main()
