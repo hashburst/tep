@@ -69,3 +69,5 @@ class AuditLog:
             if x["seq"]!=seq or x["previous_hash"]!=prev or _h(_canon(x))!=h:return False
             prev=h;seq+=1
         return True
+
+# G6 operations protocol revision: 1
