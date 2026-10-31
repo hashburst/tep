@@ -25,29 +25,34 @@ jobs:
       matrix:
         node: ["153", "154", "155", "157"]
     runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements-rc1.txt
-      - name: Verify normalized Python runtime
+      - name: Provision checksum-pinned portable Python 3.12
         shell: bash
         run: |
           set -euo pipefail
-          python --version
-          python -m pip --version
-          test "$(python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = "3.12"
-          echo "CG_WESO_PYTHON_RUNTIME_OK python=3.12"
+          URL='https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-x86_64-unknown-linux-gnu-install_only.tar.gz'
+          SHA256='6a79e922e50006b601f29e688407659da1c2b86ebcd4e9c7254cf234be8b89de'
+          rm -rf .python312 .python312.tar.gz
+          curl --fail --location --retry 3 --retry-delay 2 --output .python312.tar.gz "$URL"
+          printf '%s  %s\n' "$SHA256" .python312.tar.gz | sha256sum -c -
+          mkdir .python312
+          tar -xzf .python312.tar.gz -C .python312
+          PY="$GITHUB_WORKSPACE/.python312/python/bin/python3"
+          test -x "$PY"
+          "$PY" --version
+          "$PY" -m pip --version
+          test "$("$PY" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = "3.12"
+          echo "CG_WESO_PYTHON_RUNTIME_OK python=3.12 source=python-build-standalone sha256=$SHA256"
       - name: Provision isolated CG-WESO dependencies
         shell: bash
         run: |
           set -euo pipefail
           rm -rf .cg-weso-deps
-          python -m pip install --disable-pip-version-check --no-input --target "$GITHUB_WORKSPACE/.cg-weso-deps" -r requirements-rc1.txt
+          PY="$GITHUB_WORKSPACE/.python312/python/bin/python3"\n          "$PY" -m pip install --disable-pip-version-check --no-input --target "$GITHUB_WORKSPACE/.cg-weso-deps" -r requirements-rc1.txt
           PYTHONPATH="$GITHUB_WORKSPACE/.cg-weso-deps" python - <<'PY'
           from importlib.metadata import version
           import chiavdf,cryptography
