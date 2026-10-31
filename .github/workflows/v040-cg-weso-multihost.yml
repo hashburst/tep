@@ -29,13 +29,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir wheelhouse
-          python3 -m pip download --only-binary=:all: --platform manylinux_2_28_x86_64 --implementation cp --python-version 3.12 --abi cp312 --dest wheelhouse -r requirements-rc1.txt
-          python3 - <<'PY'
+          URL='https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-x86_64-unknown-linux-gnu-install_only.tar.gz'
+          SHA256='6a79e922e50006b601f29e688407659da1c2b86ebcd4e9c7254cf234be8b89de'
+          curl --fail --location --retry 3 --retry-delay 2 --output python312.tar.gz "$URL"
+          printf '%s  %s\n' "$SHA256" python312.tar.gz | sha256sum -c -
+          mkdir python312 wheelhouse
+          tar -xzf python312.tar.gz -C python312
+          PY="$GITHUB_WORKSPACE/python312/python/bin/python3"
+          "$PY" -m pip download --only-binary=:all: --dest wheelhouse -r requirements-rc1.txt
+          "$PY" - <<'PY'
           from pathlib import Path
           fs=sorted(p.name for p in Path("wheelhouse").iterdir())
-          assert any(n.startswith("chiavdf-1.2.1-") for n in fs),fs
-          assert any(n.startswith("cryptography-50.0.2-") for n in fs),fs
+          for prefix in ("chiavdf-1.2.1-","cryptography-50.0.2-","cffi-","pycparser-"):
+              assert any(n.startswith(prefix) for n in fs),(prefix,fs)
           print("CG_WESO_WHEELHOUSE_OK files="+",".join(fs),flush=True)
           PY
       - uses: actions/upload-artifact@v4
