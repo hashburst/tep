@@ -33,13 +33,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf .venv-cg-weso
-          python3 -m venv .venv-cg-weso
-          .venv-cg-weso/bin/python -m pip install --disable-pip-version-check --no-input -r requirements-rc1.txt
-          .venv-cg-weso/bin/python - <<'PY'
+          rm -rf .cg-weso-deps
+          python3 -m pip install --disable-pip-version-check --no-input --target "$GITHUB_WORKSPACE/.cg-weso-deps" -r requirements-rc1.txt
+          PYTHONPATH="$GITHUB_WORKSPACE/.cg-weso-deps" python3 - <<'PY'
+          from importlib.metadata import version
           import chiavdf,cryptography
-          assert getattr(chiavdf,"__version__",None) == "1.2.1", getattr(chiavdf,"__version__",None)
-          print("CG_WESO_DEPENDENCY_OK chiavdf=1.2.1 cryptography="+cryptography.__version__,flush=True)
+          assert version("chiavdf") == "1.2.1", version("chiavdf")
+          assert version("cryptography") == "50.0.2", version("cryptography")
+          print("CG_WESO_DEPENDENCY_OK chiavdf="+version("chiavdf")+" cryptography="+version("cryptography"),flush=True)
           PY
       - name: Execute and verify real deterministic CG-WESO PoH proof
         shell: bash
@@ -52,7 +53,6 @@ jobs:
           from hashburst_tep.ledger import poh_input
           from hashburst_tep.vdf import CGWesoV1
 
-          assert getattr(chiavdf,"__version__",None) == "1.2.1", getattr(chiavdf,"__version__",None)
           network_id=bytes.fromhex("a5"*32)
           count=4
           previous_h=bytes.fromhex("51"*32)
