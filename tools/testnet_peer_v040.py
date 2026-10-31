@@ -17,6 +17,7 @@ CHECKPOINT_DOMAIN=b"HB-TEP-CHECKPOINT-v1\x00"
 ENROLLMENT_CHALLENGE_DOMAIN=b"HB-TEP-ENROLLMENT-CHALLENGE-v1\x00"
 VALIDATOR_GOVERNANCE_VOTE_DOMAIN=b"HB-TEP-VALIDATOR-GOVERNANCE-VOTE-v1\x00"
 ANTI_EQUIVOCATION_LOCK_DOMAIN=b"HB-TEP-ANTI-EQUIVOCATION-LOCK-v1\x00"
+NETWORK_GENESIS_DOMAIN=b"HB-TEP-NETWORK-GENESIS-v1\x00"
 
 def _cbor(v):
  if isinstance(v,int):
@@ -93,6 +94,17 @@ def _authorize_vote_lock(state,federation_id,set_version,count,validator_id,prop
  with tmp.open("w") as h:json.dump({"schema":"hb-vote-lock-v1","locks":dict(sorted(locks.items()))},h,sort_keys=True,separators=(",",":"));h.flush();os.fsync(h.fileno())
  os.replace(tmp,p);return "LOCKED"
 
+def _genesis_path(state): return Path(state)/"production-genesis.json"
+def _bind_genesis(state,network_id,chain_id,genesis_id,canonical_genesis):
+ p=_genesis_path(state);obj={"schema":"hb-production-genesis-v1","network_id":network_id.hex(),"chain_id":chain_id.hex(),"genesis_id":genesis_id.hex(),"canonical_genesis":canonical_genesis.hex()}
+ if p.exists():
+  prior=json.loads(p.read_text())
+  if prior!=obj:raise ValueError("genesis mutation or cross-network rejected")
+  return "IDEMPOTENT"
+ tmp=p.with_suffix(".tmp")
+ with tmp.open("w") as h:json.dump(obj,h,sort_keys=True,separators=(",",":"));h.flush();os.fsync(h.fileno())
+ os.replace(tmp,p);return "BOUND"
+
 def main():
  ap=argparse.ArgumentParser();ap.add_argument("--listen",default="127.0.0.1");ap.add_argument("--port",type=int,default=47840);ap.add_argument("--state",required=True);a=ap.parse_args()
  sk,pk,nid=_load_or_create(a.state)
@@ -101,6 +113,10 @@ def main():
    b=json.dumps(obj,separators=(",",":")).encode();self.send_response(status);self.send_header("Content-Type","application/json");self.send_header("Content-Length",str(len(b)));self.end_headers();self.wfile.write(b)
   def do_GET(self):
    if self.path=="/health":return self._send({"ok":True,"profile":"v0.4.0-testnet","node_id":nid.hex(),"public_key":pk.hex()})
+   if self.path=="/genesis":
+    p=_genesis_path(a.state)
+    if not p.exists():return self._send({"node_id":nid.hex(),"bound":False})
+    o=json.loads(p.read_text());o["node_id"]=nid.hex();o["bound"]=True;return self._send(o)
    if self.path=="/finality/head":
     p=Path(a.state)/"finalized-checkpoint.bin"
     if not p.exists():return self._send({"node_id":nid.hex(),"finalized":False})
@@ -114,6 +130,14 @@ def main():
    try:
     n=int(self.headers.get("Content-Length","0"));o=json.loads(self.rfile.read(n))
    except Exception:return self._send({"error":"invalid json"},400)
+   if self.path=="/genesis/bind":
+    try:
+     net=bytes.fromhex(o["network_id"]);chain=bytes.fromhex(o["chain_id"]);gid=bytes.fromhex(o["genesis_id"]);canonical=bytes.fromhex(o["canonical_genesis"])
+     if any(len(x)!=32 for x in (net,chain,gid)) or not canonical:raise ValueError()
+     if sha3_256(NETWORK_GENESIS_DOMAIN+canonical).digest()!=gid:raise ValueError("genesis id mismatch")
+     status=_bind_genesis(a.state,net,chain,gid,canonical)
+     return self._send({"node_id":nid.hex(),"network_id":net.hex(),"chain_id":chain.hex(),"genesis_id":gid.hex(),"bind_status":status})
+    except Exception:return self._send({"error":"invalid or conflicting genesis"},409)
    if self.path=="/challenge":
     try:
      challenge=bytes.fromhex(o["challenge"])
