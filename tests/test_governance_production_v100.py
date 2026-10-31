@@ -26,25 +26,25 @@ class GovernanceProductionTests(unittest.TestCase):
  def test_full_lifecycle(self):
   state=self.state
   for target in (CANDIDATE,PENDING_ACTIVATION,ACTIVE,SUSPENDED):
-   s=state.active_validator_set();p=self.proposal(state,4,target);state=apply_governance(state,p,self.votes(p,s,3),s)
-  new=Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw,PublicFormat.Raw);s=state.active_validator_set();p=self.proposal(state,4,PENDING_ACTIVATION,new);state=apply_governance(state,p,self.votes(p,s,3),s)
+   s=state.active_validator_set();p=self.proposal(state,4,target);state=apply_governance(state,p,self.votes(p,s,s.threshold()),s)
+  new=Ed25519PrivateKey.generate().public_key().public_bytes(Encoding.Raw,PublicFormat.Raw);s=state.active_validator_set();p=self.proposal(state,4,PENDING_ACTIVATION,new);state=apply_governance(state,p,self.votes(p,s,s.threshold()),s)
   self.assertEqual({x.validator_id:x.public_key for x in state.members}[self.ids[4]],new)
-  s=state.active_validator_set();p=self.proposal(state,4,ACTIVE);state=apply_governance(state,p,self.votes(p,s,3),s)
-  s=state.active_validator_set();p=self.proposal(state,4,REVOKED);state=apply_governance(state,p,self.votes(p,s,3),s)
+  s=state.active_validator_set();p=self.proposal(state,4,ACTIVE);state=apply_governance(state,p,self.votes(p,s,s.threshold()),s)
+  s=state.active_validator_set();p=self.proposal(state,4,REVOKED);state=apply_governance(state,p,self.votes(p,s,s.threshold()),s)
   self.assertEqual({x.validator_id:x.state for x in state.members}[self.ids[4]],REVOKED)
  def test_old_set_rejected_after_version_change(self):
   old=self.state.active_validator_set();p=self.proposal(self.state,4,CANDIDATE);n=apply_governance(self.state,p,self.votes(p,old,3),old)
   p2=self.proposal(n,4,PENDING_ACTIVATION)
-  with self.assertRaises(ValueError):apply_governance(n,p2,self.votes(p2,old,3),old)
+  with self.assertRaises(ValueError):apply_governance(n,p2,self.votes(p2,old,old.threshold()),old)
  def test_rotation_requires_suspension(self):
-  s=self.state.active_validator_set();new=b"Z"*32;p=self.proposal(self.state,0,SUSPENDED);n=apply_governance(self.state,p,self.votes(p,s,3),s)
-  ns=n.active_validator_set();rot=self.proposal(n,0,PENDING_ACTIVATION,new);r=apply_governance(n,rot,self.votes(rot,ns,3),ns)
+  s=self.state.active_validator_set();new=b"Z"*32;p=self.proposal(self.state,0,SUSPENDED);n=apply_governance(self.state,p,self.votes(p,s,s.threshold()),s)
+  ns=n.active_validator_set();rot=self.proposal(n,0,PENDING_ACTIVATION,new);r=apply_governance(n,rot,self.votes(rot,ns,ns.threshold()),ns)
   self.assertEqual({x.validator_id:x.public_key for x in r.members}[self.ids[0]],new)
  def test_persistent_restart_and_replay(self):
   with tempfile.TemporaryDirectory() as d:
    path=Path(d)/"registry.json";r=PersistentGovernanceRegistry(path);r.initialize(self.state)
-   s=r.state.active_validator_set();p=self.proposal(r.state,4,CANDIDATE);r.apply(p,self.votes(p,s,3),s)
+   s=r.state.active_validator_set();p=self.proposal(r.state,4,CANDIDATE);r.apply(p,self.votes(p,s,s.threshold()),s)
    r2=PersistentGovernanceRegistry(path);self.assertEqual(r2.state.digest(),r.state.digest())
-   with self.assertRaises(ValueError):r2.apply(p,self.votes(p,s,3),s)
+   with self.assertRaises(ValueError):r2.apply(p,self.votes(p,s,s.threshold()),s)
 
 if __name__=="__main__":unittest.main(verbosity=2)
