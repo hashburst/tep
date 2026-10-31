@@ -1,3 +1,14 @@
+name: TEP v0.4.0 real multi-host ledger gate
+on:
+  workflow_dispatch:
+  push:
+    branches: [testnet/v0.4.0-remote-deploy]
+    paths: [.github/workflows/v040-ledger-multihost.yml]
+permissions:
+  contents: read
+concurrency:
+  group: tep-v040-ledger-multihost
+  cancel-in-progress: false
 jobs:
   local-ledger:
     strategy:
