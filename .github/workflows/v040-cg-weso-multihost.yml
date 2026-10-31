@@ -1,0 +1,153 @@
+name: TEP v0.4.0 real multi-host CG-WESO PoH gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [testnet/v0.4.0-remote-deploy]
+    paths:
+      - .github/workflows/v040-cg-weso-multihost.yml
+      - src/hashburst_tep/vdf/**
+      - src/hashburst_tep/poh/**
+      - src/hashburst_tep/ledger.py
+      - requirements-rc1.txt
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tep-v040-cg-weso-multihost
+  cancel-in-progress: false
+
+jobs:
+  prepare-cg-weso-wheels:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download pinned CPython 3.12 Linux wheels once
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-x86_64-unknown-linux-gnu-install_only.tar.gz'
+          SHA256='6a79e922e50006b601f29e688407659da1c2b86ebcd4e9c7254cf234be8b89de'
+          curl --fail --location --retry 3 --retry-delay 2 --output python312.tar.gz "$URL"
+          printf '%s  %s\n' "$SHA256" python312.tar.gz | sha256sum -c -
+          mkdir python312 wheelhouse
+          tar -xzf python312.tar.gz -C python312
+          PY="$GITHUB_WORKSPACE/python312/python/bin/python3"
+          "$PY" -m pip download --only-binary=:all: --dest wheelhouse -r requirements-rc1.txt
+          "$PY" - <<'PY'
+          from pathlib import Path
+          fs=sorted(p.name for p in Path("wheelhouse").iterdir())
+          for prefix in ("chiavdf-1.2.1-","cryptography-50.0.2-","cffi-","pycparser-"):
+              assert any(n.startswith(prefix) for n in fs),(prefix,fs)
+          print("CG_WESO_WHEELHOUSE_OK files="+",".join(fs),flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cg-weso-wheelhouse
+          path: wheelhouse
+          if-no-files-found: error
+
+  cg-weso-peer:
+    needs: [prepare-cg-weso-wheels]
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["153", "154", "155", "157"]
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: cg-weso-wheelhouse
+          path: wheelhouse
+      - name: Provision checksum-pinned portable Python 3.12
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL='https://github.com/astral-sh/python-build-standalone/releases/download/20261026/cpython-3.12.16%2B20261026-x86_64-unknown-linux-gnu-install_only.tar.gz'
+          SHA256='6a79e922e50006b601f29e688407659da1c2b86ebcd4e9c7254cf234be8b89de'
+          rm -rf .python312 .python312.tar.gz
+          curl --fail --location --retry 3 --retry-delay 2 --output .python312.tar.gz "$URL"
+          printf '%s  %s\n' "$SHA256" .python312.tar.gz | sha256sum -c -
+          mkdir .python312
+          tar -xzf .python312.tar.gz -C .python312
+          PY="$GITHUB_WORKSPACE/.python312/python/bin/python3"
+          test -x "$PY"
+          "$PY" --version
+          "$PY" -m pip --version
+          test "$("$PY" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" = "3.12"
+          echo "CG_WESO_PYTHON_RUNTIME_OK python=3.12 source=python-build-standalone sha256=$SHA256"
+      - name: Provision isolated CG-WESO dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .cg-weso-deps
+          PY="$GITHUB_WORKSPACE/.python312/python/bin/python3"
+          "$PY" -m pip install --disable-pip-version-check --no-input --no-index --find-links "$GITHUB_WORKSPACE/wheelhouse" --target "$GITHUB_WORKSPACE/.cg-weso-deps" -r requirements-rc1.txt
+          PYTHONPATH="$GITHUB_WORKSPACE/.cg-weso-deps" "$PY" - <<'PY'
+          from importlib.metadata import version
+          import chiavdf,cryptography
+          assert version("chiavdf") == "1.2.1", version("chiavdf")
+          assert version("cryptography") == "50.0.2", version("cryptography")
+          print("CG_WESO_DEPENDENCY_OK chiavdf="+version("chiavdf")+" cryptography="+version("cryptography"),flush=True)
+          PY
+      - name: Execute and verify real deterministic CG-WESO PoH proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PYTHONPATH="$GITHUB_WORKSPACE/.cg-weso-deps:$GITHUB_WORKSPACE/src"
+          "$GITHUB_WORKSPACE/.python312/python/bin/python3" - <<'PY'
+          import hashlib,json
+          import chiavdf
+          from hashburst_tep.ledger import poh_input
+          from hashburst_tep.vdf import CGWesoV1
+
+          network_id=bytes.fromhex("a5"*32)
+          count=4
+          previous_h=bytes.fromhex("51"*32)
+          previous_block_id=bytes.fromhex("52"*32)
+          vdf_params_hash=hashlib.sha3_256(b"HB-TEP-CG-WESO-v1|1024|4096").digest()
+          challenge=poh_input(network_id,count,previous_h,previous_block_id,vdf_params_hash)
+          adapter=CGWesoV1()
+          result=adapter.evaluate(challenge,4096)
+          assert adapter.verify(challenge,result)
+          assert len(result.output)==100 and len(result.proof)==100
+          row={"suite":adapter.suite_id,"iterations":result.iterations,"challenge":challenge.hex(),"output":result.output.hex(),"proof":result.proof.hex(),"output_sha3":hashlib.sha3_256(result.output).hexdigest(),"proof_sha3":hashlib.sha3_256(result.proof).hexdigest()}
+          open("cg-weso-result.json","w").write(json.dumps(row,sort_keys=True))
+          print("CG_WESO_REAL_VERIFY_OK suite=%s iterations=%d challenge=%s output_sha3=%s proof_sha3=%s"%(row["suite"],row["iterations"],row["challenge"],row["output_sha3"],row["proof_sha3"]),flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cg-weso-result-${{ matrix.node }}
+          path: cg-weso-result.json
+          if-no-files-found: error
+
+  verify-four-host-cg-weso:
+    needs: [cg-weso-peer]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: cg-weso-result-*
+          path: results
+      - name: Verify deterministic four-host CG-WESO convergence
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import glob,json
+          fs=glob.glob("results/**/cg-weso-result.json",recursive=True)
+          if len(fs)!=4: raise SystemExit("CG_WESO_RESULT_COUNT_NOT_4 "+repr(fs))
+          rows=[json.load(open(f)) for f in fs]
+          for key in ("suite","iterations","challenge","output","proof","output_sha3","proof_sha3"):
+            if len({r[key] for r in rows})!=1: raise SystemExit("CG_WESO_DIVERGENT_"+key.upper())
+          r=rows[0]
+          if r["suite"]!="CG-WESO-v1" or r["iterations"]!=4096: raise SystemExit("CG_WESO_PROFILE_MISMATCH")
+          print("TEP_POH_CG_WESO_MULTIHOST_4OF4_OK suite=%s iterations=%d challenge=%s output_sha3=%s proof_sha3=%s verified_hosts=4"%(r["suite"],r["iterations"],r["challenge"],r["output_sha3"],r["proof_sha3"]))
+          PY

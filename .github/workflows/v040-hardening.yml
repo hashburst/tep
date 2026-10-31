@@ -1,0 +1,75 @@
+name: TEP v0.4.0 hardening gate
+on:
+  workflow_dispatch:
+  push:
+    branches: [testnet/v0.4.0-remote-deploy]
+    paths: [.github/workflows/v040-hardening.yml, tools/testnet_peer_v040.py, deploy/systemd/hashburst-tep-testnet.service]
+permissions: {contents: read}
+jobs:
+  hardening:
+    strategy:
+      fail-fast: false
+      matrix: {node: ["153","154","155","157"]}
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Exact revision and production isolation
+        run: |
+          set -euo pipefail
+          test "$GITHUB_SHA" = "$(git rev-parse HEAD)"
+          ! grep -R -E '/var/lib/hashburst([^ -]|$)|/opt/hashburst([^ -]|$)' deploy/v040-testnet tools/testnet_peer_v040.py
+          echo "HARDENING_REVISION_ISOLATION_OK sha=$GITHUB_SHA"
+      - name: Systemd sandbox and state permissions
+        run: |
+          set -euo pipefail
+          test "$(stat -c '%U:%G:%a' /var/lib/hashburst-testnet)" = "hashburst-testnet:hashburst-testnet:700"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:47840/health >/dev/null 2>&1 && break; sleep 1; done
+          for p in NoNewPrivileges=yes PrivateTmp=yes ProtectSystem=strict ProtectHome=yes; do
+            k="${p%%=*}"; v="${p#*=}"; test "$(systemctl show hashburst-tep-testnet -p "$k" --value)" = "$v"
+          done
+          if stat /var/lib/hashburst-testnet/testnet-ed25519.key >/dev/null 2>&1; then echo PRIVATE_KEY_METADATA_VISIBLE_BY_RUNNER; exit 40; fi
+          if cat /var/lib/hashburst-testnet/testnet-ed25519.key >/dev/null 2>&1; then echo PRIVATE_KEY_READABLE_BY_RUNNER; exit 41; fi
+          echo "HARDENING_SYSTEMD_KEY_BOUNDARY_OK state_dir=700 key_inaccessible_to_runner=1"
+      - name: Malformed and quorum-negative API tests
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import urllib.request,urllib.error,json
+          def post(path,obj):
+           r=urllib.request.Request("http://127.0.0.1:47840"+path,data=(obj if isinstance(obj,bytes) else json.dumps(obj).encode()),headers={"Content-Type":"application/json"})
+           try:
+            with urllib.request.urlopen(r,timeout=3) as x:return x.status,json.load(x)
+           except urllib.error.HTTPError as e:return e.code,json.load(e)
+          code,_=post("/challenge",{"challenge":"00"});assert code==400
+          code,_=post("/finality/vote",{"validator_set_version":1});assert code==400
+          code,_=post("/ledger/append",{"index":999,"previous_entry_id":"00"*32,"payload":"01"});assert code==409
+          code,_=post("/challenge",b"{bad");assert code==400
+          print("HARDENING_MALFORMED_REPLAY_BOUNDARY_OK",flush=True)
+          PY
+      - name: Restart continuity of identity and finalized checkpoint
+        run: |
+          set -euo pipefail
+          before="$(curl -fsS http://127.0.0.1:47840/health)"; final_before="$(curl -fsS http://127.0.0.1:47840/finality/head)"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:47840/health >/dev/null 2>&1 && break; sleep 1; done
+          BEFORE="$before" FINAL_BEFORE="$final_before" python3 - <<'PY'
+          import os,json,urllib.request
+          b=json.loads(os.environ["BEFORE"]);fb=json.loads(os.environ["FINAL_BEFORE"])
+          h=json.load(urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=3));f=json.load(urllib.request.urlopen("http://127.0.0.1:47840/finality/head",timeout=3))
+          assert h["node_id"]==b["node_id"] and h["public_key"]==b["public_key"]
+          assert fb["finalized"] and f["finalized"] and f["checkpoint_id"]==fb["checkpoint_id"]
+          print("HARDENING_RESTART_CONTINUITY_OK node_id="+h["node_id"]+" checkpoint_id="+f["checkpoint_id"],flush=True)
+          PY
+      - name: Syntax and source tests available on peer
+        run: |
+          set -euo pipefail
+          python3 -m py_compile tools/testnet_peer_v040.py
+          echo "HARDENING_PEER_SYNTAX_OK"
+  certify:
+    needs: [hardening]
+    runs-on: ubuntu-22.04
+    steps:
+      - run: echo "HARDENING_4OF4_OK revision_isolation=1 systemd_sandbox=1 private_key_boundary=1 malformed_inputs=1 restart_continuity=1"

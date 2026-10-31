@@ -1,0 +1,18 @@
+# v0.4.0 testnet deployment provenance
+
+PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad
+MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c
+
+The protocol baseline identifies the frozen v0.4.0-testnet protocol and
+in-process deterministic testnet baseline.
+
+The multi-host tooling baseline identifies the later deployment tooling merge.
+It does not replace or redefine the protocol baseline.
+
+A deployment revision may advance beyond both values for release engineering,
+workflow hardening and deployment fixes. Such a revision must record both
+baselines and must not be described as a new protocol baseline.
+
+The TCP 47840 peer is an authenticated reachability and identity-continuity
+probe. Passing its checks is not evidence of TEP-PoH, ledger finality,
+Byzantine consensus or mainnet readiness.

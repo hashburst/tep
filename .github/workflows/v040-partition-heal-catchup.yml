@@ -1,0 +1,121 @@
+name: TEP v0.4.0 partition heal catchup gate
+on:
+  workflow_dispatch:
+  push:
+    branches: [testnet/v0.4.0-remote-deploy]
+    paths: [.github/workflows/v040-partition-heal-catchup.yml]
+permissions: {contents: read}
+concurrency:
+  group: tep-v040-partition-heal-catchup
+  cancel-in-progress: false
+jobs:
+  partition-heal-catchup:
+    runs-on: [self-hosted, tep-testnet-157]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Deploy catch-up capable peer and capture baseline
+        run: |
+          set -euo pipefail
+          sudo -n /usr/local/sbin/hashburst-testnet-admin install-payload "$GITHUB_WORKSPACE"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
+          ready=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:47840/health >/dev/null 2>&1; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = 1
+          python3 - <<'PY'
+          import json,urllib.request
+          for path in ("health","finality/head"):
+           with urllib.request.urlopen("http://127.0.0.1:47840/"+path,timeout=3) as r: d=json.load(r)
+           open(path.replace("/","-")+".json","w").write(json.dumps(d))
+          h=json.load(open("health.json"));f=json.load(open("finality-head.json"))
+          assert f["finalized"] and f["checkpoint_id"]=="b651ae728642ac4f4cf2024bc6b1104ab576868ae22f4c7d747e9ddf8873ce15"
+          print("PARTITION_BASELINE_OK node_id="+h["node_id"]+" checkpoint_id="+f["checkpoint_id"],flush=True)
+          PY
+      - name: Partition target and build a new 3-of-4 quorum checkpoint on surviving peers
+        run: |
+          set -euo pipefail
+          trap 'sudo -n /usr/local/sbin/hashburst-testnet-admin start >/dev/null 2>&1 || true' EXIT
+          sudo -n /usr/local/sbin/hashburst-testnet-admin stop
+          if python3 -c 'import urllib.request;urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=2)' 2>/dev/null; then exit 31; fi
+          python3 - <<'PY'
+          import json,urllib.request,hashlib
+          ips=["77.90.188.153","77.90.188.154","77.90.188.155"]
+          allids=[
+          ("e1f93d4f0642c2b4cac0f901e6c94d821849ec4a4e16923c49cc8cf647a4b257",None),
+          ("464df10f06ecf66665cc243584837b9788243cc93bf2b61faf1f7b676cf8e1ac",None),
+          ("bc96b62d8cb1448e053a44a2bdf5d99a8b776e8a6ebe70a2cbb40bfdb551c273",None),
+          ("ae434ca6d25281f36519364cedce0817fe5882936f4570f831880e708137bfa2",None)]
+          hs=[]
+          for ip in ips:
+           with urllib.request.urlopen("http://"+ip+":47840/health",timeout=5) as r:hs.append(json.load(r))
+          pubs={x["node_id"]:x["public_key"] for x in hs}
+          # public key of isolated validator is stable and obtained from the certified Federation validator set
+          pubs["ae434ca6d25281f36519364cedce0817fe5882936f4570f831880e708137bfa2"]="16269604e9f2f95907450279fa0409960bd985f83d18a38f0cf25299f499906e"
+          vals=[{"validator_id":i,"public_key":pubs[i]} for i,_ in allids]
+          def cbor(v):
+           if isinstance(v,int):
+            if v<24:return bytes([v])
+            if v<256:return b"\x18"+bytes([v])
+            if v<65536:return b"\x19"+v.to_bytes(2,"big")
+            if v<2**32:return b"\x1a"+v.to_bytes(4,"big")
+            return b"\x1b"+v.to_bytes(8,"big")
+           if isinstance(v,bytes):
+            h=cbor(len(v));return bytes([h[0]|0x40])+h[1:]+v
+           if isinstance(v,(list,tuple)):
+            h=cbor(len(v));return bytes([h[0]|0x80])+h[1:]+b"".join(cbor(x) for x in v)
+          vv=sorted((bytes.fromhex(x["validator_id"]),bytes.fromhex(x["public_key"])) for x in vals)
+          vsd=hashlib.sha3_256(b"HB-TEP-VALIDATOR-SET-v1\x00"+cbor([1,1,[[i,k] for i,k in vv]])).digest()
+          net=bytes.fromhex("a5"*32);count=5
+          bid=hashlib.sha3_256(b"HB-TEP-PARTITION-BLOCK-v1\x00"+bytes.fromhex("b651ae728642ac4f4cf2024bc6b1104ab576868ae22f4c7d747e9ddf8873ce15")).digest()
+          body={"validator_set_version":1,"validator_set_digest":vsd.hex(),"network_id":net.hex(),"count":count,"block_id":bid.hex()}
+          votes=[]
+          for ip in ips:
+           req=urllib.request.Request("http://"+ip+":47840/finality/vote",data=json.dumps(body).encode(),headers={"Content-Type":"application/json"})
+           with urllib.request.urlopen(req,timeout=5) as r:v=json.load(r)
+           votes.append({"validator_id":v["validator_id"],"signature":v["signature"]})
+          assert len({v["validator_id"] for v in votes})==3
+          h=hashlib.sha3_256(b"HB-TEP-PARTITION-POH-v1\x00"+bid).hexdigest();vph=hashlib.sha3_256(b"HB-TEP-CG-WESO-v1|1024|4096").hexdigest()
+          commit={"validator_set_version":1,"validators":vals,"votes":votes,"network_id":net.hex(),"count":count,"block_id":bid.hex(),"h":h,"vdf_params_hash":vph}
+          checkpoints=[]
+          for ip in ips:
+           req=urllib.request.Request("http://"+ip+":47840/finality/commit",data=json.dumps(commit).encode(),headers={"Content-Type":"application/json"})
+           with urllib.request.urlopen(req,timeout=5) as r:o=json.load(r)
+           assert o["votes"]==3 and o["threshold"]==3;checkpoints.append(o["checkpoint_id"])
+          assert len(set(checkpoints))==1
+          commit["checkpoint_id"]=checkpoints[0]
+          open("partition-qc.json","w").write(json.dumps(commit,sort_keys=True))
+          print("PARTITION_3OF4_QUORUM_OK target_down=1 votes=3 threshold=3 checkpoint_id="+checkpoints[0],flush=True)
+          PY
+          sudo -n /usr/local/sbin/hashburst-testnet-admin start
+          trap - EXIT
+      - name: Prove lag, heal, and QC-verified catch-up
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do curl -fsS http://127.0.0.1:47840/health >/dev/null 2>&1 && break; sleep 1; done
+          python3 - <<'PY'
+          import json,urllib.request
+          q=json.load(open("partition-qc.json"))
+          with urllib.request.urlopen("http://127.0.0.1:47840/finality/head",timeout=3) as r:before=json.load(r)
+          assert before["checkpoint_id"]!=q["checkpoint_id"]
+          print("PARTITION_LAG_PROVEN_OK stale_checkpoint_id="+before["checkpoint_id"]+" target_checkpoint_id="+q["checkpoint_id"],flush=True)
+          req=urllib.request.Request("http://127.0.0.1:47840/finality/catchup",data=json.dumps(q).encode(),headers={"Content-Type":"application/json"})
+          with urllib.request.urlopen(req,timeout=5) as r:o=json.load(r)
+          assert o["caught_up"] and o["checkpoint_id"]==q["checkpoint_id"] and o["votes"]==3 and o["threshold"]==3
+          with urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=3) as r:h=json.load(r)
+          assert h["node_id"]=="ae434ca6d25281f36519364cedce0817fe5882936f4570f831880e708137bfa2"
+          print("PARTITION_HEAL_CATCHUP_OK node_id="+h["node_id"]+" checkpoint_id="+o["checkpoint_id"]+" qc_verified=1",flush=True)
+          PY
+      - name: Verify four-host convergence
+        run: |
+          python3 - <<'PY'
+          import json,urllib.request
+          ips=["77.90.188.153","77.90.188.154","77.90.188.155","77.90.188.157"];rows=[]
+          for ip in ips:
+           with urllib.request.urlopen("http://"+ip+":47840/finality/head",timeout=5) as r:rows.append(json.load(r))
+          ids={x["checkpoint_id"] for x in rows};assert len(ids)==1 and all(x["finalized"] for x in rows)
+          print("PARTITION_HEAL_CATCHUP_4OF4_OK checkpoint_id="+next(iter(ids))+" converged_hosts=4 identity_preserved=1",flush=True)
+          PY

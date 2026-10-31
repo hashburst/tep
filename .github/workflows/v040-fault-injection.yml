@@ -1,0 +1,60 @@
+name: TEP v0.4.0 real fault injection gate
+on:
+  workflow_dispatch:
+  push:
+    branches: [testnet/v0.4.0-remote-deploy]
+    paths: [.github/workflows/v040-fault-injection.yml]
+permissions:
+  contents: read
+concurrency:
+  group: tep-v040-fault-injection
+  cancel-in-progress: false
+jobs:
+  fault-leaf-157:
+    runs-on: [self-hosted, tep-testnet-157]
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Pre-fault authenticated multi-host reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/testnet_multihost_probe_v040.py \
+            http://77.90.188.153:47840 http://77.90.188.154:47840 \
+            http://77.90.188.155:47840 http://77.90.188.157:47840
+          python3 - <<'PY'
+          import json,urllib.request
+          with urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=3) as r:h=json.load(r)
+          open("/tmp/hb-fault-node-id","w").write(h["node_id"])
+          print("PRE_FAULT_4OF4_OK target_node_id="+h["node_id"])
+          PY
+      - name: Stop leaf peer and prove remaining peers survive
+        shell: bash
+        run: |
+          set -euo pipefail
+          trap 'sudo -n /usr/local/sbin/hashburst-testnet-admin start >/dev/null 2>&1 || true' EXIT
+          sudo -n /usr/local/sbin/hashburst-testnet-admin stop
+          if python3 -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=2)' 2>/dev/null; then
+            echo "ERROR_TARGET_STILL_REACHABLE"; exit 30
+          fi
+          python3 tools/testnet_multihost_probe_v040.py \
+            http://77.90.188.153:47840 http://77.90.188.154:47840 http://77.90.188.155:47840
+          echo "FAULT_INJECTED_TARGET_DOWN_REMAINING_3OF3_OK"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin start
+          trap - EXIT
+      - name: Restore peer and prove same identity plus 4 of 4 reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 20); do
+            if after="$(python3 -c 'import json,urllib.request; print(json.load(urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=2))["node_id"])' 2>/dev/null)"; then
+              test "$after" = "$(cat /tmp/hb-fault-node-id)"
+              break
+            fi
+            sleep 1
+          done
+          test -n "${after:-}"
+          python3 tools/testnet_multihost_probe_v040.py \
+            http://77.90.188.153:47840 http://77.90.188.154:47840 \
+            http://77.90.188.155:47840 http://77.90.188.157:47840
+          echo "FAULT_RECOVERY_4OF4_OK SAME_IDENTITY_OK node_id=$after"

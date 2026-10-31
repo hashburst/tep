@@ -1,0 +1,190 @@
+name: TEP v0.4.0 remote preflight
+
+on:
+  push:
+    branches:
+      - testnet/v0.4.0-remote-deploy
+
+permissions:
+  contents: read
+
+jobs:
+  preflight-153:
+    runs-on: [self-hosted, Linux, X64, tep-testnet-153]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read-only host inventory
+        env:
+          EXPECTED_IP: "77.90.188.153"
+          RUNNER_LABEL: "tep-testnet-153"
+        shell: bash
+        run: &preflight |
+          set -eu
+          echo "=== HASHBURST TEP TESTNET PREFLIGHT ==="
+          echo "utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "runner_label=$RUNNER_LABEL"
+          echo "expected_ip=$EXPECTED_IP"
+          echo "hostname=$(hostname)"
+          echo "fqdn=$(hostname -f 2>/dev/null || true)"
+          echo "user=$(id -un)"
+          id
+          uname -a
+          test -r /etc/os-release && cat /etc/os-release || true
+          python3 --version 2>&1 || true
+          git --version 2>&1 || true
+          echo "--- addresses ---"
+          ip -brief address 2>/dev/null || true
+          echo "--- routes ---"
+          ip route 2>/dev/null || true
+          echo "--- listeners of interest ---"
+          ss -lntup 2>/dev/null | grep -E ':(47777|47778|47780|47781|47840)([[:space:]]|$)' || true
+          echo "--- HashBurst services, metadata only ---"
+          systemctl list-units --type=service --all --no-pager 2>/dev/null | grep -Ei 'hashburst|tep' || true
+          echo "--- HashBurst paths, metadata only ---"
+          for p in /opt/hashburst /opt/hashburst-tep /opt/hashburst-tep-testnet /var/lib/hashburst /var/lib/hashburst-testnet; do
+            if [ -e "$p" ]; then ls -ld "$p"; else echo "absent $p"; fi
+          done
+          echo "--- disk ---"
+          df -h / /opt /var 2>/dev/null || true
+          echo "--- firewall metadata ---"
+          if command -v ufw >/dev/null 2>&1; then ufw status 2>&1 || true; fi
+          if command -v firewall-cmd >/dev/null 2>&1; then firewall-cmd --state 2>&1 || true; fi
+          echo "--- privilege boundary ---"
+          if sudo -n true 2>/dev/null; then
+            echo "ERROR: github-runner has passwordless sudo"
+            exit 20
+          fi
+          echo "OK: no passwordless sudo"
+          echo "--- expected address check ---"
+          if ip -o addr 2>/dev/null | grep -Fq "$EXPECTED_IP"; then
+            echo "OK: expected IP is locally assigned"
+          else
+            echo "NOTICE: expected public IP not present on a local interface (possible NAT/provider routing)"
+          fi
+          echo "PREFLIGHT_COMPLETE"
+
+      - name: Verify restricted privilege boundary and bootstrap isolated paths
+        shell: bash
+        run: &restricted_bootstrap |
+          set -euo pipefail
+          ADMIN=/usr/local/sbin/hashburst-testnet-admin
+          test "$(id -un)" = github-runner
+          test -x "$ADMIN"
+          test "$(stat -c '%U:%G:%a' "$ADMIN")" = "root:root:755"
+          if sudo -n true 2>/dev/null; then
+            echo "ERROR: unrestricted passwordless sudo"
+            exit 20
+          fi
+          allowed="$(sudo -n -l)"
+          for cmd in bootstrap start stop restart status enable disable daemon-reload; do
+            grep -Fq "(root) NOPASSWD: $ADMIN $cmd" <<<"$allowed"
+          done
+          if grep -E 'NOPASSWD: (ALL|/bin/|/usr/bin/|/usr/sbin/)' <<<"$allowed" >/dev/null; then
+            echo "ERROR: overly broad sudo rule"
+            exit 21
+          fi
+          if [ ! -d /opt/hashburst-tep-testnet ] || [ ! -d /var/lib/hashburst-testnet ]; then
+            sudo -n "$ADMIN" bootstrap
+          else
+            echo "Existing isolated testnet paths detected; verifying instead of recreating"
+          fi
+          test "$(stat -c '%U:%G:%a' /opt/hashburst-tep-testnet)" = "root:root:755"
+          test "$(stat -c '%U:%G:%a' /var/lib/hashburst-testnet)" = "hashburst-testnet:hashburst-testnet:700"
+          test "$(getent passwd hashburst-testnet | cut -d: -f7)" = "/usr/sbin/nologin"
+          echo "BOUNDARY_AND_BOOTSTRAP_OK"
+
+      - name: Verify deployment prerequisites without changing packages
+        shell: bash
+        run: &deploy_prereq |
+          set -euo pipefail
+          echo "deployment_revision=$GITHUB_SHA"
+          grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' "$GITHUB_WORKSPACE/deploy/v040-testnet/PROVENANCE"
+          grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' "$GITHUB_WORKSPACE/deploy/v040-testnet/PROVENANCE"
+          python3 -c 'import cryptography; from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey; assert Ed25519PrivateKey.generate(); print("cryptography=" + cryptography.__version__)'
+          python3 -m venv --help >/dev/null
+          test -f /etc/systemd/system/hashburst-tep-testnet.service
+          test -f /opt/hashburst-tep-testnet/tools/testnet_peer_v040.py
+          systemctl is-active --quiet hashburst-tep-testnet.service
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+          peer = Path("/opt/hashburst-tep-testnet/tools/testnet_peer_v040.py")
+          ast.parse(peer.read_text(encoding="utf-8"), filename=str(peer))
+          print("DEPLOYED_PEER_SYNTAX_READONLY_OK")
+          PY
+          test -r /opt/hashburst-tep-testnet/deploy/v040-testnet/PROVENANCE
+          test -r /opt/hashburst-tep-testnet/deploy/v040-testnet/DEPLOYMENT_REVISION
+          grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' /opt/hashburst-tep-testnet/deploy/v040-testnet/PROVENANCE
+          grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' /opt/hashburst-tep-testnet/deploy/v040-testnet/PROVENANCE
+          echo "DEPLOYED_PAYLOAD_PRESENT_AND_ACTIVE_OK"
+          echo "DEPLOYMENT_PREREQUISITES_OK"
+          allowed="$(sudo -n -l)"
+          grep -Fq "(root) NOPASSWD: /usr/local/sbin/hashburst-testnet-admin install-payload /opt/actions-runner/actions-runner/_work/tep/tep" <<<"$allowed"
+          echo "INSTALL_BOUNDARY_OK"
+
+  preflight-154:
+    runs-on: [self-hosted, Linux, X64, tep-testnet-154]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read-only host inventory
+        env:
+          EXPECTED_IP: "77.90.188.154"
+          RUNNER_LABEL: "tep-testnet-154"
+        shell: bash
+        run: *preflight
+      - name: Verify restricted privilege boundary and bootstrap isolated paths
+        shell: bash
+        run: *restricted_bootstrap
+      - name: Verify deployment prerequisites without changing packages
+        shell: bash
+        run: *deploy_prereq
+
+  preflight-155:
+    runs-on: [self-hosted, Linux, X64, tep-testnet-155]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read-only host inventory
+        env:
+          EXPECTED_IP: "77.90.188.155"
+          RUNNER_LABEL: "tep-testnet-155"
+        shell: bash
+        run: *preflight
+      - name: Verify restricted privilege boundary and bootstrap isolated paths
+        shell: bash
+        run: *restricted_bootstrap
+      - name: Verify deployment prerequisites without changing packages
+        shell: bash
+        run: *deploy_prereq
+
+  preflight-157:
+    runs-on: [self-hosted, Linux, X64, tep-testnet-157]
+    timeout-minutes: 10
+    steps:
+      - name: Checkout deployment revision
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Read-only host inventory
+        env:
+          EXPECTED_IP: "77.90.188.157"
+          RUNNER_LABEL: "tep-testnet-157"
+        shell: bash
+        run: *preflight
+      - name: Verify restricted privilege boundary and bootstrap isolated paths
+        shell: bash
+        run: *restricted_bootstrap
+      - name: Verify deployment prerequisites without changing packages
+        shell: bash
+        run: *deploy_prereq

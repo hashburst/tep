@@ -1,0 +1,72 @@
+name: TEP v0.4.0 identity challenge continuity gate
+on:
+  workflow_dispatch:
+  push:
+    branches: [testnet/v0.4.0-remote-deploy]
+    paths: [.github/workflows/v040-identity-gate.yml]
+permissions:
+  contents: read
+concurrency:
+  group: tep-v040-identity-gate
+  cancel-in-progress: false
+jobs:
+  identity:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {node: "153", runner: tep-testnet-153}
+          - {node: "154", runner: tep-testnet-154}
+          - {node: "155", runner: tep-testnet-155}
+          - {node: "157", runner: tep-testnet-157}
+    runs-on: [self-hosted, "${{ matrix.runner }}"]
+    steps:
+      - uses: actions/checkout@v4
+        with: {persist-credentials: false}
+      - name: Verify installed service health and identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, urllib.request
+          from hashlib import sha3_256
+          with urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=3) as r: h=json.load(r)
+          assert h.get("ok") is True
+          pk=bytes.fromhex(h["public_key"]); nid=bytes.fromhex(h["node_id"])
+          assert len(pk)==32 and len(nid)==32
+          assert nid==sha3_256(b"HB-TEP-TESTNET-NODE-v1\x00"+pk).digest()
+          open("/tmp/hb-node-id-before","w").write(h["node_id"])
+          print("IDENTITY_OK node_id="+h["node_id"]+" public_key="+h["public_key"])
+          PY
+      - name: Verify Ed25519 signed challenge
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, urllib.request
+          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+          challenge=bytes.fromhex("4a"*32)
+          req=urllib.request.Request("http://127.0.0.1:47840/challenge",data=json.dumps({"challenge":challenge.hex()}).encode(),headers={"Content-Type":"application/json"},method="POST")
+          with urllib.request.urlopen(req,timeout=3) as r: o=json.load(r)
+          nid=bytes.fromhex(o["node_id"]); pk=bytes.fromhex(o["public_key"])
+          assert bytes.fromhex(o["challenge"])==challenge
+          Ed25519PublicKey.from_public_bytes(pk).verify(bytes.fromhex(o["signature"]),b"HB-TEP-TESTNET-CHALLENGE-v1\x00"+nid+challenge)
+          assert o["node_id"]==open("/tmp/hb-node-id-before").read()
+          print("ED25519_CHALLENGE_OK node_id="+o["node_id"])
+          PY
+      - name: Restart service and verify identity continuity
+        shell: bash
+        run: |
+          set -euo pipefail
+          before="$(cat /tmp/hb-node-id-before)"
+          sudo -n /usr/local/sbin/hashburst-testnet-admin restart
+          for i in $(seq 1 20); do
+            if after="$(python3 -c 'import json,urllib.request; print(json.load(urllib.request.urlopen("http://127.0.0.1:47840/health",timeout=2))["node_id"])' 2>/dev/null)"; then
+              test "$before" = "$after"
+              echo "RESTART_CONTINUITY_OK node_id=$after"
+              exit 0
+            fi
+            sleep 1
+          done
+          sudo -n /usr/local/sbin/hashburst-testnet-admin status || true
+          exit 1
