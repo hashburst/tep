@@ -1,25 +1,18 @@
-name: TEP v0.4.0 real multi-host ledger gate
-on:
-  workflow_dispatch:
-  push:
-    branches: [testnet/v0.4.0-remote-deploy]
-    paths: [.github/workflows/v040-ledger-multihost.yml]
-permissions:
-  contents: read
-concurrency:
-  group: tep-v040-ledger-multihost
-  cancel-in-progress: false
 jobs:
-  local-ledger-153:
-    runs-on: [self-hosted, tep-testnet-153]
-    steps: &ledger_steps
+  local-ledger:
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["153", "154", "155", "157"]
+    runs-on: [self-hosted, "tep-testnet-${{ matrix.node }}"]
+    steps:
       - uses: actions/checkout@v4
         with: {persist-credentials: false}
       - name: Append deterministic entry locally and verify signed ACK
         shell: bash
         run: |
           set -euo pipefail
-          NODE="${{ runner.name }}"
+          NODE="${{ matrix.node }}"
           python3 - <<'PY'
           import json,urllib.request
           from hashlib import sha3_256
@@ -45,18 +38,10 @@ jobs:
           PY
       - uses: actions/upload-artifact@v4
         with:
-          name: ledger-ack-${{ runner.name }}
+          name: ledger-ack-${{ matrix.node }}
           path: ledger-ack.json
           if-no-files-found: error
-  local-ledger-154:
-    runs-on: [self-hosted, tep-testnet-154]
-    steps: *ledger_steps
-  local-ledger-155:
-    runs-on: [self-hosted, tep-testnet-155]
-    steps: *ledger_steps
-  local-ledger-157:
-    runs-on: [self-hosted, tep-testnet-157]
-    steps: *ledger_steps
+
   verify-four-host-convergence:
     needs: [local-ledger-153, local-ledger-154, local-ledger-155, local-ledger-157]
     runs-on: ubuntu-latest
