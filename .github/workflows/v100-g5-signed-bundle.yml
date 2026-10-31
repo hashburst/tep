@@ -36,7 +36,20 @@ jobs:
           printf '{"artifact":"tep-v1.0.0-mainnet.tar.gz","artifact_sha256":"%s","sbom_sha256":"%s","provenance_sha256":"%s","source_commit":"%s","version":"1.0.0-mainnet"}\n' "$A" "$S" "$P" "$GITHUB_SHA" > b1/release-manifest.json
           tar --sort=name --mtime='@0' --owner=0 --group=0 --numeric-owner -C b1 -czf tep-v1.0.0-mainnet-bundle.tar.gz tep-v1.0.0-mainnet.tar.gz sbom.spdx.json provenance.json release-manifest.json
           echo "REPRODUCIBLE_ARTIFACT_OK sha256=$A source_commit=$GITHUB_SHA"
-      - name: Package hosted GitHub attestation verifier\n        run: |\n          set -euo pipefail\n          command -v gh\n          cp "$(command -v gh)" gh-verifier\n          chmod 755 gh-verifier\n          sha256sum gh-verifier > gh-verifier.sha256\n      - uses: actions/upload-artifact@v4\n        with: {name: g5-gh-verifier, path: "gh-verifier\\ngh-verifier.sha256"}\n      - uses: actions/attest-build-provenance@v3
+      - name: Package hosted GitHub attestation verifier
+        run: |
+          set -euo pipefail
+          command -v gh
+          cp "$(command -v gh)" gh-verifier
+          chmod 755 gh-verifier
+          sha256sum gh-verifier > gh-verifier.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: g5-gh-verifier
+          path: |
+            gh-verifier
+            gh-verifier.sha256
+      - uses: actions/attest-build-provenance@v3
         with:
           subject-path: tep-v1.0.0-mainnet-bundle.tar.gz
       - uses: actions/attest-sbom@v3
@@ -58,6 +71,8 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: {name: g5-signed-bundle}
+      - uses: actions/download-artifact@v4
+        with: {name: g5-gh-verifier, path: verifier}
       - name: Verify GitHub OIDC provenance before unpack/deploy
         env: {GH_TOKEN: "${{ github.token }}"}
         run: |
