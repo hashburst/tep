@@ -19,7 +19,33 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  prepare-cg-weso-wheels:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Download pinned CPython 3.12 Linux wheels once
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir wheelhouse
+          python3 -m pip download --only-binary=:all: --platform manylinux_2_28_x86_64 --implementation cp --python-version 3.12 --abi cp312 --dest wheelhouse -r requirements-rc1.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          fs=sorted(p.name for p in Path("wheelhouse").iterdir())
+          assert any(n.startswith("chiavdf-1.2.1-") for n in fs),fs
+          assert any(n.startswith("cryptography-50.0.2-") for n in fs),fs
+          print("CG_WESO_WHEELHOUSE_OK files="+",".join(fs),flush=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cg-weso-wheelhouse
+          path: wheelhouse
+          if-no-files-found: error
+
   cg-weso-peer:
+    needs: [prepare-cg-weso-wheels]
     strategy:
       fail-fast: false
       matrix:
@@ -30,6 +56,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: cg-weso-wheelhouse
+          path: wheelhouse
       - name: Provision checksum-pinned portable Python 3.12
         shell: bash
         run: |
@@ -53,7 +83,7 @@ jobs:
           set -euo pipefail
           rm -rf .cg-weso-deps
           PY="$GITHUB_WORKSPACE/.python312/python/bin/python3"
-          "$PY" -m pip install --disable-pip-version-check --no-input --target "$GITHUB_WORKSPACE/.cg-weso-deps" -r requirements-rc1.txt
+          "$PY" -m pip install --disable-pip-version-check --no-input --no-index --find-links "$GITHUB_WORKSPACE/wheelhouse" --target "$GITHUB_WORKSPACE/.cg-weso-deps" -r requirements-rc1.txt
           PYTHONPATH="$GITHUB_WORKSPACE/.cg-weso-deps" "$PY" - <<'PY'
           from importlib.metadata import version
           import chiavdf,cryptography
