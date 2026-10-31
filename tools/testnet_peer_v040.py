@@ -114,9 +114,7 @@ def main():
     try:
      set_version=int(o["validator_set_version"]);set_digest=bytes.fromhex(o["validator_set_digest"]);proposal_digest=bytes.fromhex(o["proposal_digest"])
      if set_version<0 or len(set_digest)!=32 or len(proposal_digest)!=32:raise ValueError()
-     from hashburst_tep.encoding import dumps
-     from hashburst_tep.domains import VALIDATOR_GOVERNANCE_VOTE_DOMAIN
-     msg=VALIDATOR_GOVERNANCE_VOTE_DOMAIN+dumps([1,set_version,set_digest,proposal_digest])
+     msg=VALIDATOR_GOVERNANCE_VOTE_DOMAIN+_cbor([1,set_version,set_digest,proposal_digest])
      return self._send({"node_id":nid.hex(),"validator_id":nid.hex(),"public_key":pk.hex(),"signature":sk.sign(msg).hex()})
     except Exception:return self._send({"error":"invalid governance vote request"},400)
    if self.path=="/finality/vote":
