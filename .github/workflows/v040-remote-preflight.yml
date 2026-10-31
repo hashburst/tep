@@ -116,10 +116,10 @@ jobs:
           ast.parse(peer.read_text(encoding="utf-8"), filename=str(peer))
           print("DEPLOYED_PEER_SYNTAX_READONLY_OK")
           PY
-          test -r /opt/hashburst-tep-testnet/PROVENANCE
-          test -r /opt/hashburst-tep-testnet/DEPLOYMENT_REVISION
-          grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' /opt/hashburst-tep-testnet/PROVENANCE
-          grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' /opt/hashburst-tep-testnet/PROVENANCE
+          test -r /opt/hashburst-tep-testnet/deploy/v040-testnet/PROVENANCE
+          test -r /opt/hashburst-tep-testnet/deploy/v040-testnet/DEPLOYMENT_REVISION
+          grep -Fxq 'PROTOCOL_BASELINE=a97a17833074e9e44820fe8e90c151e8b22f37ad' /opt/hashburst-tep-testnet/deploy/v040-testnet/PROVENANCE
+          grep -Fxq 'MULTIHOST_TOOLING_BASELINE=0194b15f01c19d32765b804bc10d5f76da1e890c' /opt/hashburst-tep-testnet/deploy/v040-testnet/PROVENANCE
           echo "DEPLOYED_PAYLOAD_PRESENT_AND_ACTIVE_OK"
           echo "DEPLOYMENT_PREREQUISITES_OK"
           allowed="$(sudo -n -l)"
