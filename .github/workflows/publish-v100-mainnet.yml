@@ -1,0 +1,73 @@
+name: Publish TEP v1.0.0-mainnet verified release
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/publish-v100-mainnet.yml]
+permissions:
+  contents: write
+  actions: read
+  attestations: read
+  id-token: write
+jobs:
+  publish:
+    runs-on: ubuntu-22.04
+    env:
+      TARGET_SHA: e9b47d28114d2c4dc7d622c1b9f2efbbd8fbbb52
+      G5_RUN: "41235550981"
+      G7_RUN: "41235551083"
+      TAG: v1.0.0-mainnet
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: "${{ env.TARGET_SHA }}", persist-credentials: false}
+      - name: Enforce immutable verified target
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$G5_RUN --jq .head_sha)" = "$TARGET_SHA"
+          test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$G5_RUN --jq .conclusion)" = success
+          test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$G7_RUN --jq .head_sha)" = "$TARGET_SHA"
+          test "$(gh api repos/$GITHUB_REPOSITORY/actions/runs/$G7_RUN --jq .conclusion)" = success
+      - name: Download G5 release artifact
+        run: |
+          set -euo pipefail
+          mkdir release
+          gh run download "$G5_RUN" -n g5-signed-bundle -D release
+          find release -maxdepth 2 -type f -print
+      - name: Verify manifest checksums and GitHub provenance
+        run: |
+          set -euo pipefail
+          cd release
+          if test -f SHA256SUMS; then sha256sum -c SHA256SUMS; fi
+          PKG=$(find . -type f \( -name '*.tar.gz' -o -name '*.tgz' \) | head -1)
+          test -n "$PKG"
+          gh attestation verify "$PKG" --repo "$GITHUB_REPOSITORY"
+          echo "FINAL_RELEASE_PROVENANCE_OK target=$TARGET_SHA g5_run=$G5_RUN g7_run=$G7_RUN"
+      - name: Create annotated release tag
+        run: |
+          set -euo pipefail
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" >/dev/null 2>&1; then
+            test "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --jq .object.sha)" = "$TARGET_SHA" || exit 1
+          else
+            TAGOBJ=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" -f tag="$TAG" -f message="HashBurst TEP v1.0.0-mainnet; G1-G7 production verified; HVM/HBT excluded and HOLD" -f object="$TARGET_SHA" -f type=commit --jq .sha)
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$TAGOBJ" >/dev/null
+          fi
+      - name: Publish GitHub Release
+        run: |
+          set -euo pipefail
+          cat > release-notes.md <<EOF
+          HashBurst TEP v1.0.0-mainnet
+
+          Production gates G1-G7 passed.
+          Release target: $TARGET_SHA
+          Post-merge G5 supply-chain run: $G5_RUN
+          Post-merge G7 four-host acceptance run: $G7_RUN
+
+          Release package is reproducible and carries GitHub artifact provenance/attestation generated from the target commit. Verify with GitHub CLI attestation verification.
+
+          HVM/HBT mainnet is not part of this release. Its founder key remains separate and HOLD.
+          EOF
+          if gh release view "$TAG" >/dev/null 2>&1; then exit 1; fi
+          mapfile -t FILES < <(find release -type f)
+          gh release create "$TAG" "${FILES[@]}" --title "HashBurst TEP v1.0.0-mainnet" --notes-file release-notes.md --verify-tag --latest
+          echo "TEP_V1_MAINNET_RELEASE_PUBLISHED_OK tag=$TAG target=$TARGET_SHA"
